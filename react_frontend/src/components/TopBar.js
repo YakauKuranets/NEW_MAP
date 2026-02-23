@@ -46,9 +46,9 @@ export default function TopBar() {
         </div>
 
         <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 ${isOnline ? 'border-cyber-blue/30 bg-cyber-blue/10 text-cyber-blue' : 'border-red-400/60 bg-red-900/30 text-red-200'}`}>
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 ${isOnline ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300' : 'border-red-400/60 bg-red-900/30 text-red-300 animate-pulse'}`}>
             <Satellite className="h-4 w-4" />
-            <span className="text-xs font-bold uppercase tracking-wider">{isOnline ? 'Grid Online' : 'GRID ISOLATED'}</span>
+            <span className="text-xs font-bold uppercase tracking-wider">{isOnline ? '[GRID: ONLINE]' : '[GRID: ISOLATED (OFFLINE)]'}</span>
           </div>
 
           <div className="flex items-center gap-2 rounded-xl border border-yellow-300/40 bg-yellow-300/10 px-3 py-1.5 text-yellow-200">

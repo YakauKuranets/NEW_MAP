@@ -4,6 +4,8 @@ import useChatStore from '../store/useChatStore';
 
 const asArray = (value) => (Array.isArray(value) ? value : [value]);
 
+const getPendingId = (payload) => payload?.pending_id ?? payload?.marker_id ?? payload?.id;
+
 /**
  * Realtime subscription hook for map, pending moderation and incident chat streams.
  * @param {{url?: string, wsFactory?: (url: string) => WebSocket}} [options]
@@ -37,14 +39,25 @@ export default function useWebSocket({
           return;
         }
 
-        if (eventName === 'pending_created') {
-          asArray(data).forEach((item) => upsertPendingMarker(item));
+        if (eventName === 'pending_created' || eventName === 'NEW_PENDING_MARKER') {
+          const pendingPayload = data ?? message?.marker ?? message;
+          asArray(pendingPayload).forEach((item) => upsertPendingMarker(item));
           return;
         }
 
-        if (eventName === 'pending_approved' || eventName === 'pending_rejected') {
-          const pendingId = data?.pending_id ?? data?.id;
+        if (
+          eventName === 'pending_approved'
+          || eventName === 'pending_rejected'
+          || eventName === 'MARKER_APPROVED'
+          || eventName === 'MARKER_REJECTED'
+        ) {
+          const pendingId = getPendingId(data) ?? getPendingId(message);
           if (pendingId !== undefined && pendingId !== null) removePendingMarker(pendingId);
+
+          if (eventName === 'MARKER_APPROVED') {
+            const approvedObject = data?.new_object ?? message?.new_object;
+            if (approvedObject) addIncident(approvedObject);
+          }
           return;
         }
 

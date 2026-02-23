@@ -29,7 +29,7 @@ describe('useWebSocket', () => {
     container.remove();
   });
 
-  test('updates Zustand store on telemetry, pending, chat (legacy/new) and incident events', () => {
+  test('updates Zustand store on telemetry, pending moderation, chat and incident events', () => {
     const socket = {
       onmessage: null,
       close: jest.fn(),
@@ -57,11 +57,32 @@ describe('useWebSocket', () => {
 
       socket.onmessage({
         data: JSON.stringify({
+          event: 'NEW_PENDING_MARKER',
+          marker: { id: 102, lat: 53.91, lon: 27.57, status: 'pending' },
+        }),
+      });
+
+      socket.onmessage({
+        data: JSON.stringify({
+          event: 'MARKER_APPROVED',
+          marker_id: 101,
+          new_object: { id: 303, lat: 53.92, lon: 27.58, category: 'approved' },
+        }),
+      });
+
+      socket.onmessage({
+        data: JSON.stringify({
+          event: 'MARKER_REJECTED',
+          marker_id: 102,
+        }),
+      });
+
+      socket.onmessage({
+        data: JSON.stringify({
           event: 'chat_message',
           data: { id: 'chat-1', text: 'Принял', sender: 'agent' },
         }),
       });
-
 
       socket.onmessage({
         data: JSON.stringify({
@@ -92,11 +113,10 @@ describe('useWebSocket', () => {
 
     const state = useMapStore.getState();
     expect(state.agents['u-1']).toEqual(expect.objectContaining({ lat: 53.95, lon: 27.59, heading: 80 }));
-    expect(state.pendingMarkers).toEqual([
-      expect.objectContaining({ id: 101, status: 'pending' }),
-    ]);
+    expect(state.pendingMarkers).toEqual([]);
     expect(state.incidents).toEqual([
       expect.objectContaining({ id: 202, category: 'fire' }),
+      expect.objectContaining({ id: 303, category: 'approved' }),
     ]);
     expect(state.chatMessages).toEqual([
       expect.objectContaining({ id: 'chat-1', text: 'Принял', sender: 'agent' }),

@@ -6,6 +6,7 @@ import { Map } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 import useMapStore from '../store/useMapStore';
+import { initPmtiles } from '../vendor/pmtilesSetup';
 
 const INITIAL_VIEW_STATE = {
   longitude: 27.56,
@@ -16,6 +17,8 @@ const INITIAL_VIEW_STATE = {
 };
 
 const MAP_STYLE = '/map_style_cyberpunk.json';
+
+initPmtiles();
 
 const toNumber = (value) => {
   const n = Number(value);

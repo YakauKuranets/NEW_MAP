@@ -10,6 +10,34 @@ const toNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const resolvePendingId = (pending) => String(pending?.id ?? pending?.pending ?? pending?.pending_id ?? '');
+
+/**
+ * @typedef {{status: string, id?: number, remaining?: number}} ModerationResponse
+ */
+
+/**
+ * Moderates a pending marker with strict response validation.
+ * @param {'approve'|'reject'} action
+ * @param {string} markerId
+ * @returns {Promise<ModerationResponse>}
+ */
+const moderatePending = async (action, markerId) => {
+  const endpoint = action === 'approve'
+    ? `${APPROVE_ENDPOINT}/${markerId}/approve`
+    : `${REJECT_ENDPOINT}/${markerId}/reject`;
+
+  const response = await fetch(endpoint, { method: 'POST' });
+  if (!response.ok) throw new Error(`pending_${action}_failed`);
+
+  const payload = await response.json();
+  if (!payload || typeof payload !== 'object' || typeof payload.status !== 'string') {
+    throw new Error('invalid_moderation_payload');
+  }
+
+  return payload;
+};
+
 export default function PendingRequestsPanel({ onFlyToPending }) {
   const pendingMarkers = useMapStore((s) => s.pendingMarkers);
   const setPendingMarkers = useMapStore((s) => s.setPendingMarkers);
@@ -18,7 +46,6 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
   const activePendingMarkerId = useMapStore((s) => s.activePendingMarkerId);
   const addIncident = useMapStore((s) => s.addIncident);
 
-  const [isOpen, setIsOpen] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -44,11 +71,11 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
 
   const selectedPending = useMemo(() => {
     if (!activePendingMarkerId) return null;
-    return pendingMarkers.find((item) => String(item.id ?? item.pending ?? item.pending_id) === String(activePendingMarkerId)) || null;
+    return pendingMarkers.find((item) => resolvePendingId(item) === String(activePendingMarkerId)) || null;
   }, [pendingMarkers, activePendingMarkerId]);
 
   const focusPending = (pending) => {
-    const markerId = String(pending.id ?? pending.pending ?? pending.pending_id);
+    const markerId = resolvePendingId(pending);
     setActivePendingMarker(markerId);
     const lon = toNumber(pending.lon ?? pending.longitude);
     const lat = toNumber(pending.lat ?? pending.latitude);
@@ -59,13 +86,11 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
 
   const approvePending = async (pending) => {
     if (!pending || isSubmitting) return;
-    const markerId = String(pending.id ?? pending.pending ?? pending.pending_id);
+    const markerId = resolvePendingId(pending);
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(`${APPROVE_ENDPOINT}/${markerId}/approve`, { method: 'POST' });
-      if (!response.ok) throw new Error('approve_failed');
-
+      const payload = await moderatePending('approve', markerId);
       removePendingMarker(markerId);
 
       const lon = toNumber(pending.lon ?? pending.longitude);
@@ -73,7 +98,7 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
       if (lon !== null && lat !== null) {
         addIncident({
           ...pending,
-          id: pending.address_id || pending.id,
+          id: payload.id ?? pending.address_id ?? pending.id,
           lon,
           lat,
           status: 'approved',
@@ -81,7 +106,7 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
         });
       }
     } catch (_e) {
-      // no-op in UI, websocket may still deliver eventual state
+      // websocket may still deliver eventual state
     } finally {
       setIsSubmitting(false);
     }
@@ -89,15 +114,14 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
 
   const rejectPending = async (pending) => {
     if (!pending || isSubmitting) return;
-    const markerId = String(pending.id ?? pending.pending ?? pending.pending_id);
+    const markerId = resolvePendingId(pending);
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(`${REJECT_ENDPOINT}/${markerId}/reject`, { method: 'POST' });
-      if (!response.ok) throw new Error('reject_failed');
+      await moderatePending('reject', markerId);
       removePendingMarker(markerId);
     } catch (_e) {
-      // no-op in UI, websocket may still deliver eventual state
+      // websocket may still deliver eventual state
     } finally {
       setIsSubmitting(false);
     }
@@ -121,68 +145,67 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
   }, [selectedPending, isSubmitting]);
 
   return (
-    <aside className="pointer-events-auto absolute right-0 top-14 z-40 h-[calc(100%-56px)] w-96 border-l border-yellow-300/30 bg-black/45 backdrop-blur-md">
-      <div className="flex items-center gap-2 border-b border-yellow-300/20 px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setIsOpen((prev) => !prev)}
-          className="rounded border border-yellow-300/40 bg-yellow-300/10 px-2 py-1 text-xs text-yellow-200"
-        >
-          {isOpen ? 'Свернуть' : 'Развернуть'}
-        </button>
-        <div className="text-sm font-semibold uppercase tracking-wider text-yellow-100">Входящие сигналы</div>
-        <div className="ml-auto rounded-full border border-yellow-300/40 px-2 py-0.5 text-xs text-yellow-200">{pendingMarkers.length}</div>
+    <aside className="pointer-events-auto absolute top-20 left-4 w-80 bg-black/70 backdrop-blur-md border border-yellow-500/50 rounded-xl shadow-[0_0_15px_rgba(234,179,8,0.2)] z-40 overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-yellow-500/30 px-3 py-2.5">
+        <span className="h-2.5 w-2.5 rounded-full bg-yellow-300 animate-pulse shadow-[0_0_10px_rgba(250,204,21,0.9)]" />
+        <h3 className="text-[11px] font-black uppercase tracking-[0.16em] text-yellow-100">ОЖИДАЮТ ПОДТВЕРЖДЕНИЯ</h3>
+        <span className="ml-auto rounded border border-yellow-300/40 bg-yellow-300/10 px-1.5 py-0.5 text-[10px] font-bold text-yellow-200">
+          {pendingMarkers.length}
+        </span>
       </div>
 
-      {isOpen ? (
-        <div className="h-[calc(100%-57px)] overflow-y-auto p-3">
-          <div className="space-y-2">
-            {pendingMarkers.map((pending) => {
-              const markerId = String(pending.id ?? pending.pending ?? pending.pending_id);
-              const isActive = markerId === String(activePendingMarkerId);
-              return (
-                <div
-                  key={markerId}
-                  className={`rounded-lg border p-3 ${isActive ? 'border-yellow-200 bg-yellow-300/10' : 'border-white/10 bg-black/30'}`}
-                >
-                  <button type="button" onClick={() => focusPending(pending)} className="w-full text-left">
-                    <div className="text-xs uppercase tracking-wider text-yellow-200">{pending.category || 'signal'}</div>
-                    <div className="mt-1 text-sm text-slate-100">{pending.name || pending.title || pending.address || 'Новая заявка'}</div>
-                    <div className="mt-1 text-xs text-slate-400">{pending.notes || pending.description || 'Без описания'}</div>
-                  </button>
+      <div className="max-h-[420px] overflow-y-auto p-3 space-y-2.5">
+        {pendingMarkers.map((pending) => {
+          const markerId = resolvePendingId(pending);
+          const isActive = markerId === String(activePendingMarkerId);
+          const lon = toNumber(pending.lon ?? pending.longitude);
+          const lat = toNumber(pending.lat ?? pending.latitude);
 
-                  {isActive ? (
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => approvePending(pending)}
-                        disabled={isSubmitting}
-                        className="rounded border border-emerald-400/50 bg-emerald-500/20 px-2 py-1.5 text-xs text-emerald-200"
-                      >
-                        ✓ Подтвердить (Enter)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => rejectPending(pending)}
-                        disabled={isSubmitting}
-                        className="rounded border border-red-400/50 bg-red-500/20 px-2 py-1.5 text-xs text-red-200"
-                      >
-                        ✗ Отклонить (Del)
-                      </button>
-                    </div>
-                  ) : null}
+          return (
+            <div
+              key={markerId}
+              className={`rounded-lg border p-2.5 ${isActive ? 'border-yellow-300/70 bg-yellow-300/10' : 'border-white/10 bg-black/40'}`}
+            >
+              <button type="button" onClick={() => focusPending(pending)} className="w-full text-left">
+                <div className="text-[11px] uppercase tracking-wider text-yellow-200/90">
+                  {pending.reporter || pending.user_id || pending.author || 'Agent'}
                 </div>
-              );
-            })}
-          </div>
+                <div className="mt-1 text-xs text-slate-100">
+                  {pending.address || pending.name || pending.title || 'Новая гео-заявка'}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  {lat !== null && lon !== null ? `LAT ${lat.toFixed(5)} · LON ${lon.toFixed(5)}` : 'Координаты не указаны'}
+                </div>
+              </button>
 
-          {pendingMarkers.length === 0 ? (
-            <div className="mt-4 rounded-lg border border-dashed border-white/20 p-4 text-center text-xs text-slate-400">
-              Новых заявок нет.
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => approvePending(pending)}
+                  disabled={isSubmitting}
+                  className="rounded border border-cyan-400/60 bg-cyan-500/15 px-2 py-1.5 text-[11px] font-bold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-50"
+                >
+                  ✓ Принять
+                </button>
+                <button
+                  type="button"
+                  onClick={() => rejectPending(pending)}
+                  disabled={isSubmitting}
+                  className="rounded border border-red-400/60 bg-red-500/15 px-2 py-1.5 text-[11px] font-bold text-red-200 transition hover:bg-red-500/25 disabled:opacity-50"
+                >
+                  ✗ Отклонить
+                </button>
+              </div>
             </div>
-          ) : null}
-        </div>
-      ) : null}
+          );
+        })}
+
+        {pendingMarkers.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-white/20 p-3 text-center text-xs text-slate-400">
+            Нет входящих заявок.
+          </div>
+        ) : null}
+      </div>
     </aside>
   );
 }
