@@ -16,6 +16,7 @@ object UploadState {
     indices = [
         Index(value = ["sessionId", "tsEpochMs"], unique = false),
         Index(value = ["state"]),
+        Index(value = ["synced"]),
         Index(value = ["updatedAtMs"])
     ]
 )
@@ -33,6 +34,8 @@ data class TrackPointEntity(
 
     /** 0=pending,1=inflight,2=failed,3=uploaded */
     val state: Int = UploadState.PENDING,
+    /** 0=not synced to backend websocket, 1=synced/acked */
+    val synced: Int = 0,
     val attempts: Int = 0,
     val lastError: String? = null,
     val createdAtMs: Long = System.currentTimeMillis(),

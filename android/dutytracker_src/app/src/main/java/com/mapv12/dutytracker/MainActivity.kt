@@ -18,7 +18,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.mapv12.dutytracker.ui.theme.DutyTrackerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         WatchdogWorker.ensureScheduled(this)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            DutyTrackerTheme {
                 TacticalTerminalApp(
                     onStartTracking = {
                         ForegroundLocationService.setTrackingOn(this, true)

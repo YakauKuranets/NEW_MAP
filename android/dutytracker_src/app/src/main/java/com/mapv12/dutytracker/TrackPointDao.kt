@@ -2,19 +2,23 @@ package com.mapv12.dutytracker
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TrackPointDao {
-    @Insert
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(p: TrackPointEntity): Long
 
-    @Insert
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(points: List<TrackPointEntity>): List<Long>
 
     @Query("SELECT COUNT(*) FROM track_points WHERE state != 3")
     suspend fun countQueued(): Int
+
+    @Query("SELECT COUNT(*) FROM track_points WHERE synced = 0")
+    suspend fun countUnsynced(): Int
 
     @Query("SELECT COUNT(*) FROM track_points WHERE state = 0")
     suspend fun countPending(): Int
@@ -33,10 +37,16 @@ interface TrackPointDao {
     suspend fun markInflight(ids: List<Long>, nowMs: Long = System.currentTimeMillis()): Int
 
     @Query(
-        "UPDATE track_points SET state = 3, updatedAtMs = :nowMs, lastError = NULL " +
+        "UPDATE track_points SET state = 3, synced = 1, updatedAtMs = :nowMs, lastError = NULL " +
             "WHERE id IN (:ids)"
     )
     suspend fun markUploaded(ids: List<Long>, nowMs: Long = System.currentTimeMillis())
+
+    @Query(
+        "UPDATE track_points SET state = 3, synced = 1, updatedAtMs = :nowMs, lastError = NULL " +
+            "WHERE id IN (:ids)"
+    )
+    suspend fun markSynced(ids: List<Long>, nowMs: Long = System.currentTimeMillis())
 
     @Query(
         "UPDATE track_points SET state = 2, attempts = attempts + 1, updatedAtMs = :nowMs, lastError = :err " +
@@ -83,6 +93,13 @@ interface TrackPointDao {
             "ORDER BY tsEpochMs ASC LIMIT :limit"
     )
     suspend fun loadForUpload(limit: Int, maxAttempts: Int): List<TrackPointEntity>
+
+    @Query(
+        "SELECT * FROM track_points " +
+            "WHERE synced = 0 " +
+            "ORDER BY tsEpochMs ASC LIMIT :limit"
+    )
+    suspend fun loadUnsynced(limit: Int): List<TrackPointEntity>
 
     @Query(
         "SELECT * FROM track_points " +
