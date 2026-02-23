@@ -32,7 +32,7 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
   const activePendingMarkerId = useMapStore((s) => s.activePendingMarkerId);
   const setSelectedObject = useMapStore((s) => s.setSelectedObject);
 
-  const [pulseTick, setPulseTick] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
 
   useEffect(() => {
@@ -41,7 +41,7 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
 
     const loop = () => {
       if (!mounted) return;
-      setPulseTick((x) => (x + 1) % 10_000);
+      setCurrentTime((x) => (x + 1) % 10_000);
       raf = window.requestAnimationFrame(loop);
     };
 
@@ -58,9 +58,9 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
       ...prev,
       longitude: flyToTarget.lon,
       latitude: flyToTarget.lat,
-      zoom: Math.max(prev.zoom, 14.5),
+      zoom: 16,
       transitionInterpolator: new FlyToInterpolator({ speed: 1.2 }),
-      transitionDuration: 900,
+      transitionDuration: 1000,
     }));
   }, [flyToTarget]);
 
@@ -102,7 +102,8 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
     [pendingMarkers],
   );
 
-  const sosPulse = Math.sin(pulseTick * 0.15) * 0.5 + 0.5;
+  const sosPulse = Math.sin(currentTime * 0.15) * 0.5 + 0.5;
+  const pendingPulse = Math.sin(currentTime * 0.09) * 0.5 + 0.5;
 
   const layers = useMemo(() => {
     const agentLayer = new ScatterplotLayer({
@@ -158,10 +159,11 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
       getRadius: (d) => {
         const markerId = String(d.id ?? d.pending ?? d.pending_id);
         const isActive = markerId === String(activePendingMarkerId);
-        return isActive ? 190 : 150;
+        const baseRadius = isActive ? 190 : 150;
+        return baseRadius + pendingPulse * 55;
       },
-      getFillColor: () => [253, 224, 71, Math.round(120 + sosPulse * 90)],
-      getLineColor: [255, 245, 180, 255],
+      getFillColor: () => [255, 200, 0, 200],
+      getLineColor: () => [255, 200, 0, Math.round(180 + pendingPulse * 75)],
       lineWidthMinPixels: 2,
       radiusMinPixels: 8,
       radiusMaxPixels: 26,
@@ -171,7 +173,7 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
     });
 
     return [incidentLayer, pendingLayer, agentLayer];
-  }, [normalizedAgents, normalizedIncidents, normalizedPending, activePendingMarkerId, sosPulse]);
+  }, [normalizedAgents, normalizedIncidents, normalizedPending, activePendingMarkerId, pendingPulse, sosPulse]);
 
   return (
     <div className="absolute inset-0">

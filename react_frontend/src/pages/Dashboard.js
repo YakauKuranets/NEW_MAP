@@ -40,7 +40,9 @@ export default function Dashboard() {
             </div>
             <IncidentFeed theme={theme} />
             <IncidentChat />
-            <PendingRequestsPanel onFlyToPending={setFlyToTarget} />
+            <div className="absolute inset-0 z-30 pointer-events-none">
+              <PendingRequestsPanel onFlyToPending={setFlyToTarget} />
+            </div>
           </>
         );
       case 'agents':
