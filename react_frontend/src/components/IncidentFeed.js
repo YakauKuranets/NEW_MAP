@@ -1,92 +1,78 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, MapPin, Clock, ExternalLink } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, MapPin, Clock3 } from 'lucide-react';
 import useMapStore from '../store/useMapStore';
 
-export default function IncidentFeed({ theme = 'dark' }) {
-  // ИСПРАВЛЕНИЕ: Используем markers вместо старых incidents
-  const { markers = [], setActiveMarker } = useMapStore();
+export default function IncidentFeed() {
+  const incidents = useMapStore((s) => s.incidents);
+  const [open, setOpen] = useState(true);
 
-  const isDark = theme === 'dark';
-
-  // Динамические стили в зависимости от темы
-  const headerBg = isDark ? 'bg-slate-900/80 border-slate-700' : 'bg-white/90 border-slate-300 shadow-xl';
-  const cardBg = isDark ? 'bg-slate-800/60 border-slate-700/50 hover:bg-slate-700/60' : 'bg-white/80 border-slate-200 shadow-md hover:bg-slate-50';
-  const textPrimary = isDark ? 'text-slate-200' : 'text-slate-800';
-  const textSecondary = isDark ? 'text-slate-400' : 'text-slate-500';
+  const sorted = useMemo(
+    () => [...(incidents || [])].sort((a, b) => Number(b.id || 0) - Number(a.id || 0)).slice(0, 20),
+    [incidents],
+  );
 
   return (
-    <div className="absolute top-6 right-6 w-80 max-h-[85vh] overflow-y-auto z-40 pr-2 pointer-events-none custom-scrollbar">
+    <div className="pointer-events-none absolute right-0 top-20 z-40 h-[calc(100vh-6rem)]">
+      <button
+        className="pointer-events-auto absolute -left-10 top-4 rounded-l-xl border border-white/10 bg-black/60 px-2 py-2 text-cyber-blue backdrop-blur-md"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="toggle incident feed"
+      >
+        {open ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+      </button>
 
-      {/* Заголовок сводки */}
-      <div className={`flex items-center gap-2 mb-4 pointer-events-auto backdrop-blur-md border p-3 rounded-xl shadow-2xl transition-colors duration-500 ${headerBg}`}>
-        <AlertTriangle className={`w-5 h-5 animate-pulse ${isDark ? 'text-amber-500' : 'text-amber-600'}`} />
-        <h2 className={`font-bold tracking-wider text-sm ${textPrimary}`}>
-          ОПЕРАТИВНАЯ СВОДКА
-        </h2>
-        <span className="ml-auto bg-blue-500/20 text-blue-500 py-0.5 px-2 rounded-full text-[10px] font-black border border-blue-500/30">
-          {markers.length}
-        </span>
-      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.aside
+            initial={{ x: 320, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 320, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="pointer-events-auto h-full w-80 border-l border-white/10 bg-black/35 backdrop-blur-cyber"
+          >
+            <div className="flex items-center gap-2 border-b border-white/10 p-4">
+              <AlertTriangle className="h-4 w-4 text-alert-yellow" />
+              <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-100">Live Incidents</h3>
+              <span className="ml-auto rounded-full border border-alert-yellow/30 bg-alert-yellow/10 px-2 py-0.5 text-[10px] font-black text-alert-yellow">
+                {sorted.length}
+              </span>
+            </div>
 
-      {/* Список объектов (Последние 10) */}
-      <div className="flex flex-col gap-3 pointer-events-auto">
-        <AnimatePresence>
-          {[...markers].reverse().slice(0, 10).map((marker) => (
-            <motion.div
-              key={marker.id}
-              initial={{ opacity: 0, x: 50, scale: 0.95 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9, x: 20 }}
-              transition={{ duration: 0.4, type: "spring", stiffness: 100 }}
-              onClick={() => setActiveMarker(marker.id)}
-              className={`backdrop-blur-md border p-4 rounded-2xl transition-all cursor-pointer group ${cardBg}`}
-            >
-              <div className="flex justify-between items-start mb-2">
-                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded border ${
-                  isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-700 border-blue-200'
-                }`}>
-                  ОБЪЕКТ ФИКСИРОВАН
-                </span>
-                <span className={`text-[10px] flex items-center gap-1 font-mono ${textSecondary}`}>
-                  <Clock className="w-3 h-3" />
-                  {/* Используем ID как временную метку, если нет tsEpochMs */}
-                  {new Date(parseInt(marker.id) || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
-
-              <h4 className={`text-sm font-bold mb-1 truncate ${textPrimary}`}>
-                {marker.title || 'Безымянный объект'}
-              </h4>
-
-              <p className={`text-[11px] mb-3 line-clamp-2 leading-relaxed ${textSecondary}`}>
-                {marker.description || 'Описание отсутствует в базе данных.'}
-              </p>
-
-              <div className={`flex justify-between items-center text-[10px] border-t pt-3 ${isDark ? 'border-white/5' : 'border-slate-200'}`}>
-                <div className="flex items-center gap-1 opacity-70">
-                  <MapPin className="w-3 h-3 text-rose-500" />
-                  <span className="truncate w-32 font-mono">
-                    {marker.lat?.toFixed(4)}, {marker.lon?.toFixed(4)}
-                  </span>
-                </div>
-                {marker.url && (
-                  <div className="flex items-center gap-1 text-blue-500 font-bold group-hover:underline">
-                    <ExternalLink size={10} /> LINK
+            <div className="h-[calc(100%-58px)] space-y-2 overflow-y-auto p-3">
+              {sorted.map((incident) => (
+                <button
+                  key={incident.id || `${incident.lat}-${incident.lon}`}
+                  className="group w-full rounded-xl border border-white/10 bg-black/30 p-3 text-left transition hover:border-cyber-blue/70 hover:shadow-neon"
+                >
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-cyber-blue">
+                      {incident.category || 'INCIDENT'}
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
+                      <Clock3 className="h-3 w-3" />
+                      {new Date(Number(incident.id) || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
                   </div>
-                )}
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+                  <p className="line-clamp-2 text-xs text-slate-200">{incident.notes || incident.description || 'No description'}</p>
+                  <div className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400">
+                    <MapPin className="h-3 w-3 text-alert-yellow" />
+                    <span>
+                      {Number(incident.lat || 0).toFixed(4)}, {Number(incident.lon || 0).toFixed(4)}
+                    </span>
+                  </div>
+                </button>
+              ))}
 
-        {markers.length === 0 && (
-          <div className={`text-center py-10 opacity-30 italic text-xs ${textSecondary}`}>
-            Ожидание входящих данных...
-          </div>
+              {sorted.length === 0 && (
+                <div className="rounded-xl border border-dashed border-white/10 p-4 text-center text-xs text-slate-400">
+                  Waiting for realtime incidents...
+                </div>
+              )}
+            </div>
+          </motion.aside>
         )}
-      </div>
-
+      </AnimatePresence>
     </div>
   );
 }

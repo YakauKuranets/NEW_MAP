@@ -27,7 +27,7 @@ describe('useWebSocket', () => {
     container.remove();
   });
 
-  test('updates store on pending_created and duty_location_update', () => {
+  test('updates Zustand store on telemetry_update and pending_created events', () => {
     const socket = {
       onmessage: null,
       close: jest.fn(),
@@ -41,24 +41,24 @@ describe('useWebSocket', () => {
     act(() => {
       socket.onmessage({
         data: JSON.stringify({
-          event: 'pending_created',
-          data: { id: 101, lat: 53.9, lon: 27.56, category: 'Охрана' },
+          event: 'telemetry_update',
+          data: { agent_id: 'u-1', lat: 53.95, lon: 27.59, heading: 80 },
         }),
       });
+
       socket.onmessage({
         data: JSON.stringify({
-          event: 'duty_location_update',
-          data: { user_id: 'u-1', lat: 53.95, lon: 27.59, status: 'on_duty' },
+          event: 'pending_created',
+          data: { id: 101, lat: 53.9, lon: 27.56, category: 'Охрана', status: 'pending' },
         }),
       });
     });
 
     const state = useMapStore.getState();
+    expect(state.agents['u-1']).toEqual(expect.objectContaining({ lat: 53.95, lon: 27.59, heading: 80 }));
     expect(state.incidents).toEqual([
       expect.objectContaining({ id: 101, status: 'pending' }),
     ]);
-    expect(state.trackers['u-1']).toEqual(expect.objectContaining({ lat: 53.95, lon: 27.59 }));
-    expect(state.statuses['u-1']).toBe('on_duty');
 
     act(() => {
       root.unmount();

@@ -9,17 +9,14 @@
 """
 
 import json
-import hmac
-import hashlib
 import os
 import uuid
 import time
 from threading import Thread
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qsl
 
 import requests
-from flask import Response, jsonify, request, current_app, render_template
+from flask import Response, jsonify, request, current_app, render_template, g
 
 from sqlalchemy.exc import OperationalError
 
@@ -35,22 +32,7 @@ from ..security.api_keys import require_bot_api_key
 from ..security.rate_limit import check_rate_limit
 from ..services.ai_vision_service import analyze_incident_photo
 from ..services.voice_service import enqueue_voice_incident
-
-
-def _validate_telegram_init_data(init_data: str, bot_token: str) -> bool:
-    """Проверка подписи Telegram WebApp initData по официальной схеме."""
-    if not init_data or not bot_token:
-        return False
-
-    items = dict(parse_qsl(init_data, keep_blank_values=True))
-    got_hash = (items.pop("hash", "") or "").strip()
-    if not got_hash:
-        return False
-
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(items.items(), key=lambda kv: kv[0]))
-    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
-    calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(calc_hash, got_hash)
+from .middlewares.telegram_webapp_security import enforce_telegram_init_data
 
 
 
@@ -103,6 +85,15 @@ def _schedule_ai_vision_for_pending(pending_id: int, photo_value: Optional[str])
 # ---------------------------------------------------------------------------
 # Вспомогательная функция поиска дубликатов в базе данных
 # ---------------------------------------------------------------------------
+
+@bp.before_request
+def bot_twa_security_middleware() -> Response | None:
+    """Validate Telegram Mini App initData for protected TWA endpoints."""
+    protected_endpoints = {"bot.bot_webapp_submit"}
+    if request.endpoint in protected_endpoints:
+        return enforce_telegram_init_data()
+    return None
+
 
 @bp.post('/voice')
 def bot_voice_incident() -> Response:
@@ -396,18 +387,7 @@ def bot_webapp() -> Response:
 def bot_webapp_submit() -> Response:
     """Приём заявки из Telegram Mini App с проверкой initData."""
     payload = request.get_json(silent=True) or {}
-    init_data = (payload.get("initData") or "").strip()
-    bot_token = (current_app.config.get("TELEGRAM_BOT_TOKEN") or "").strip()
-
-    if not _validate_telegram_init_data(init_data, bot_token):
-        return jsonify({"error": "forbidden"}), 403
-
-    items = dict(parse_qsl(init_data, keep_blank_values=True))
-    user_data = {}
-    try:
-        user_data = json.loads(items.get("user") or "{}")
-    except Exception:
-        user_data = {}
+    user_data = getattr(g, "telegram_webapp_user", {}) or {}
 
     lat = parse_coord((payload.get("coords") or {}).get("lat") if isinstance(payload.get("coords"), dict) else payload.get("lat"))
     lon = parse_coord((payload.get("coords") or {}).get("lon") if isinstance(payload.get("coords"), dict) else payload.get("lon"))
