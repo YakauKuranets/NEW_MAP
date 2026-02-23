@@ -1,5 +1,5 @@
-import React from 'react';
-import { Cpu, Activity, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Cpu, Activity, ShieldCheck, Satellite } from 'lucide-react';
 import useMapStore from '../store/useMapStore';
 
 function StatusPill({ label, online = true }) {
@@ -13,7 +13,23 @@ function StatusPill({ label, online = true }) {
 
 export default function TopBar() {
   const agents = useMapStore((s) => s.agents);
+  const pendingMarkers = useMapStore((s) => s.pendingMarkers);
   const activeAgents = Object.keys(agents || {}).length;
+  const pendingCount = pendingMarkers.length;
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
+
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   return (
     <div className="pointer-events-auto absolute left-0 right-0 top-0 z-50 border-b border-white/10 bg-black/40 backdrop-blur-md">
@@ -29,10 +45,22 @@ export default function TopBar() {
           <StatusPill label="WebSocket" online />
         </div>
 
-        <div className="flex items-center gap-2 rounded-xl border border-cyber-blue/30 bg-cyber-blue/10 px-3 py-1.5 text-cyber-blue shadow-neon">
-          <Activity className="h-4 w-4" />
-          <span className="text-xs font-bold uppercase tracking-wider">Agents: {activeAgents}</span>
-          <Cpu className="h-4 w-4 opacity-80" />
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 ${isOnline ? 'border-cyber-blue/30 bg-cyber-blue/10 text-cyber-blue' : 'border-red-400/60 bg-red-900/30 text-red-200'}`}>
+            <Satellite className="h-4 w-4" />
+            <span className="text-xs font-bold uppercase tracking-wider">{isOnline ? 'Grid Online' : 'GRID ISOLATED'}</span>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-xl border border-yellow-300/40 bg-yellow-300/10 px-3 py-1.5 text-yellow-200">
+            <span className={`h-2.5 w-2.5 rounded-full ${pendingCount > 0 ? 'animate-pulse bg-yellow-300 shadow-[0_0_12px_rgba(252,211,77,0.9)]' : 'bg-yellow-200/50'}`} />
+            <span className="text-xs font-bold uppercase tracking-wider">Входящие сигналы: {pendingCount}</span>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-xl border border-cyber-blue/30 bg-cyber-blue/10 px-3 py-1.5 text-cyber-blue shadow-neon">
+            <Activity className="h-4 w-4" />
+            <span className="text-xs font-bold uppercase tracking-wider">Agents: {activeAgents}</span>
+            <Cpu className="h-4 w-4 opacity-80" />
+          </div>
         </div>
       </div>
     </div>

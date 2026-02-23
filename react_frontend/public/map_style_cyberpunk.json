@@ -1,0 +1,105 @@
+{
+  "version": 8,
+  "name": "Autonomous Grid Cyberpunk",
+  "glyphs": "/fonts/{fontstack}/{range}.pbf",
+  "sources": {
+    "grid": {
+      "type": "vector",
+      "url": "pmtiles:///tiles/autonomous_grid.pmtiles",
+      "attribution": "Local Intranet Tile Grid"
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#020205"
+      }
+    },
+    {
+      "id": "landuse-dark",
+      "type": "fill",
+      "source": "grid",
+      "source-layer": "landuse",
+      "paint": {
+        "fill-color": "#04060a",
+        "fill-opacity": 0.95
+      }
+    },
+    {
+      "id": "buildings-black",
+      "type": "fill",
+      "source": "grid",
+      "source-layer": "building",
+      "paint": {
+        "fill-color": "#000000",
+        "fill-opacity": 0.96,
+        "fill-outline-color": "#0ef"
+      }
+    },
+    {
+      "id": "roads-dark-blue",
+      "type": "line",
+      "source": "grid",
+      "source-layer": "transportation",
+      "paint": {
+        "line-color": "#0a1f3d",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          0.4,
+          12,
+          1.5,
+          16,
+          4.5
+        ],
+        "line-opacity": 0.95
+      }
+    },
+    {
+      "id": "road-neon-edges",
+      "type": "line",
+      "source": "grid",
+      "source-layer": "transportation",
+      "paint": {
+        "line-color": "#29d3ff",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          0.2,
+          12,
+          0.9,
+          16,
+          2.2
+        ],
+        "line-opacity": 0.55
+      }
+    },
+    {
+      "id": "water-deep",
+      "type": "fill",
+      "source": "grid",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#020b1a",
+        "fill-opacity": 0.9
+      }
+    },
+    {
+      "id": "boundaries-neon",
+      "type": "line",
+      "source": "grid",
+      "source-layer": "boundary",
+      "paint": {
+        "line-color": "#00e6ff",
+        "line-width": 1,
+        "line-opacity": 0.8
+      }
+    }
+  ]
+}

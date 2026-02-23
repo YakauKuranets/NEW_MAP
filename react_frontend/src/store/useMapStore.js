@@ -3,13 +3,18 @@ import { create } from '../vendor/zustand';
 const initialState = {
   agents: {},
   incidents: [],
+  pendingMarkers: [],
   selectedObject: null,
   trackers: {},
   statuses: {},
+  chatMessages: [],
   markers: [],
   activeMarkerId: null,
+  activePendingMarkerId: null,
   draftMarker: null,
 };
+
+const getEntityId = (item) => item?.id ?? item?.incident_id ?? item?.pending ?? item?.pending_id;
 
 const useMapStore = create((set) => ({
   ...initialState,
@@ -66,6 +71,39 @@ const useMapStore = create((set) => ({
   removeIncident: (incidentId) => set((state) => ({
     incidents: state.incidents.filter((it) => String(it.id ?? it.incident_id) !== String(incidentId)),
   })),
+
+  setPendingMarkers: (markers) => set({ pendingMarkers: Array.isArray(markers) ? markers : [] }),
+
+  upsertPendingMarker: (pendingMarker) => set((state) => {
+    if (!pendingMarker) return state;
+
+    const rawId = getEntityId(pendingMarker);
+    if (rawId === undefined || rawId === null) {
+      return { pendingMarkers: [pendingMarker, ...state.pendingMarkers] };
+    }
+
+    const pendingId = String(rawId);
+    const existingIdx = state.pendingMarkers.findIndex((it) => String(getEntityId(it)) === pendingId);
+    if (existingIdx >= 0) {
+      const next = [...state.pendingMarkers];
+      next[existingIdx] = { ...next[existingIdx], ...pendingMarker, id: rawId };
+      return { pendingMarkers: next };
+    }
+
+    return { pendingMarkers: [{ ...pendingMarker, id: rawId }, ...state.pendingMarkers] };
+  }),
+
+  removePendingMarker: (pendingId) => set((state) => ({
+    pendingMarkers: state.pendingMarkers.filter((it) => String(getEntityId(it)) !== String(pendingId)),
+    activePendingMarkerId: String(state.activePendingMarkerId) === String(pendingId) ? null : state.activePendingMarkerId,
+  })),
+
+  setActivePendingMarker: (pendingId) => set({ activePendingMarkerId: pendingId ? String(pendingId) : null }),
+
+  addChatMessage: (message) => set((state) => {
+    if (!message) return state;
+    return { chatMessages: [...state.chatMessages, message] };
+  }),
 
   setSelectedObject: (selectedObject) => set({ selectedObject }),
 

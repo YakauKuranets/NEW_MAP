@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer } from '@deck.gl/layers';
-import Map from 'react-map-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import { FlyToInterpolator } from '@deck.gl/core';
+import { Map } from 'react-map-gl/maplibre';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
 import useMapStore from '../store/useMapStore';
 
@@ -14,19 +15,22 @@ const INITIAL_VIEW_STATE = {
   bearing: 0,
 };
 
-const MAP_STYLE = 'mapbox://styles/mapbox/dark-v11';
+const MAP_STYLE = '/map_style_cyberpunk.json';
 
 const toNumber = (value) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 };
 
-export default function CommandCenterMap({ onUserClick }) {
+export default function CommandCenterMap({ onUserClick, flyToTarget }) {
   const agentsMap = useMapStore((s) => s.agents);
   const incidents = useMapStore((s) => s.incidents);
+  const pendingMarkers = useMapStore((s) => s.pendingMarkers);
+  const activePendingMarkerId = useMapStore((s) => s.activePendingMarkerId);
   const setSelectedObject = useMapStore((s) => s.setSelectedObject);
 
   const [pulseTick, setPulseTick] = useState(0);
+  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
 
   useEffect(() => {
     let raf = 0;
@@ -44,6 +48,18 @@ export default function CommandCenterMap({ onUserClick }) {
       window.cancelAnimationFrame(raf);
     };
   }, []);
+
+  useEffect(() => {
+    if (!flyToTarget) return;
+    setViewState((prev) => ({
+      ...prev,
+      longitude: flyToTarget.lon,
+      latitude: flyToTarget.lat,
+      zoom: Math.max(prev.zoom, 14.5),
+      transitionInterpolator: new FlyToInterpolator({ speed: 1.2 }),
+      transitionDuration: 900,
+    }));
+  }, [flyToTarget]);
 
   const agents = useMemo(() => Object.values(agentsMap || {}), [agentsMap]);
 
@@ -69,6 +85,18 @@ export default function CommandCenterMap({ onUserClick }) {
       })
       .filter(Boolean),
     [incidents],
+  );
+
+  const normalizedPending = useMemo(
+    () => (pendingMarkers || [])
+      .map((pending) => {
+        const lon = toNumber(pending.lon ?? pending.longitude);
+        const lat = toNumber(pending.lat ?? pending.latitude);
+        if (lon === null || lat === null) return null;
+        return { ...pending, lon, lat };
+      })
+      .filter(Boolean),
+    [pendingMarkers],
   );
 
   const sosPulse = Math.sin(pulseTick * 0.15) * 0.5 + 0.5;
@@ -106,8 +134,8 @@ export default function CommandCenterMap({ onUserClick }) {
       radiusUnits: 'meters',
       getPosition: (d) => [d.lon, d.lat],
       getRadius: 160,
-      getFillColor: [255, 216, 77, 180],
-      getLineColor: [255, 240, 160, 255],
+      getFillColor: (d) => (String(d.status || '').toLowerCase() === 'approved' ? [43, 121, 255, 175] : [255, 216, 77, 180]),
+      getLineColor: (d) => (String(d.status || '').toLowerCase() === 'approved' ? [110, 168, 255, 255] : [255, 240, 160, 255]),
       lineWidthMinPixels: 1,
       radiusMinPixels: 8,
       radiusMaxPixels: 24,
@@ -116,13 +144,37 @@ export default function CommandCenterMap({ onUserClick }) {
       },
     });
 
-    return [incidentLayer, agentLayer];
-  }, [normalizedAgents, normalizedIncidents, sosPulse]);
+    const pendingLayer = new ScatterplotLayer({
+      id: 'pending-layer',
+      data: normalizedPending,
+      pickable: true,
+      filled: true,
+      stroked: true,
+      radiusUnits: 'meters',
+      getPosition: (d) => [d.lon, d.lat],
+      getRadius: (d) => {
+        const markerId = String(d.id ?? d.pending ?? d.pending_id);
+        const isActive = markerId === String(activePendingMarkerId);
+        return isActive ? 190 : 150;
+      },
+      getFillColor: () => [253, 224, 71, Math.round(120 + sosPulse * 90)],
+      getLineColor: [255, 245, 180, 255],
+      lineWidthMinPixels: 2,
+      radiusMinPixels: 8,
+      radiusMaxPixels: 26,
+      transitions: {
+        getPosition: 250,
+      },
+    });
+
+    return [incidentLayer, pendingLayer, agentLayer];
+  }, [normalizedAgents, normalizedIncidents, normalizedPending, activePendingMarkerId, sosPulse]);
 
   return (
     <div className="absolute inset-0">
       <DeckGL
-        initialViewState={INITIAL_VIEW_STATE}
+        viewState={viewState}
+        onViewStateChange={({ viewState: nextViewState }) => setViewState(nextViewState)}
         controller
         layers={layers}
         onClick={(info) => {
@@ -132,7 +184,6 @@ export default function CommandCenterMap({ onUserClick }) {
         }}
       >
         <Map
-          mapboxAccessToken={process.env.REACT_APP_MAPBOX_TOKEN}
           mapStyle={MAP_STYLE}
           reuseMaps
           dragRotate

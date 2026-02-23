@@ -10,15 +10,15 @@
     "@loaders.gl/core": "^4.3.4",
     "@loaders.gl/ply": "^4.3.4",
     "axios": "^1.4.0",
+    "deck.gl": "^9.2.9",
     "framer-motion": "^12.34.3",
     "lucide-react": "^0.575.0",
-    "mapbox-gl": "^3.18.1",
     "maplibre-gl": "^4.7.1",
+    "pmtiles": "^4.3.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-map-gl": "^7.1.9",
-    "zustand": "^4.5.5",
-    "deck.gl": "^9.2.9"
+    "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.8",

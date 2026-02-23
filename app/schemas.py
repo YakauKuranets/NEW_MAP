@@ -42,3 +42,10 @@ class AiVoiceResultSchema(StrictSchema):
     intent: str | None = Field(default=None, min_length=1, max_length=128)
     entities: dict[str, Any] = Field(default_factory=dict)
     model: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class IncidentChatSendSchema(StrictSchema):
+    """Contract for posting incident chat messages."""
+
+    text: str = Field(min_length=1, max_length=4000)
+    author_id: str = Field(min_length=1, max_length=128)

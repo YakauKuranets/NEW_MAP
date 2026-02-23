@@ -21,9 +21,10 @@ from flask import request, jsonify, abort, session, current_app, Response
 from ..helpers import require_admin
 from ..extensions import db
 from ..realtime.hub import broadcast_sync
+from ..realtime.broker import get_broker
 from ..security.rate_limit import check_rate_limit
 from ..models import Incident, IncidentEvent, IncidentAssignment, DutyShift, TrackerDevice, Object
-from ..schemas import IncidentCreateSchema
+from ..schemas import IncidentCreateSchema, IncidentChatSendSchema
 
 from . import bp
 
@@ -175,6 +176,66 @@ def _get_current_user() -> tuple[str, str]:
     if device_id:
         return "tracker", device_id
     abort(403)
+
+
+
+
+@bp.post("/<int:incident_id>/chat/send")
+def api_incident_chat_send(incident_id: int) -> tuple[Response, int] | Response:
+    """Send incident chat message via HTTP -> DB -> Redis Pub/Sub pipeline."""
+    require_admin("viewer")
+
+    incident: Incident | None = Incident.query.get(incident_id)
+    if incident is None:
+        return jsonify({"error": "incident_not_found"}), 404
+
+    payload: Dict[str, Any] = request.get_json(silent=True, force=True) or {}
+    try:
+        contract: IncidentChatSendSchema = IncidentChatSendSchema.model_validate(payload)
+    except ValidationError as exc:
+        return jsonify({"error": "validation_failed", "details": exc.errors()}), 400
+
+    sender_type, fallback_sender_id = _get_current_user()
+    role: str = "dispatcher" if sender_type == "admin" else "agent"
+    author_id: str = contract.author_id or fallback_sender_id
+    author_name: str = str(session.get("admin_username") or session.get("username") or author_id)
+    text: str = contract.text
+
+    chat_payload: Dict[str, Any] = {
+        "author_id": author_id,
+        "author": author_name,
+        "role": role,
+        "text": text,
+    }
+
+    chat_event = IncidentEvent(
+        incident_id=incident_id,
+        event_type="chat_message",
+        payload=chat_payload,
+        ts=datetime.utcnow(),
+    )
+    db.session.add(chat_event)
+    db.session.commit()
+
+    timestamp_iso: str = chat_event.ts.isoformat() if chat_event.ts else datetime.utcnow().isoformat()
+    message_envelope: Dict[str, Any] = {
+        "id": chat_event.id,
+        "author": author_name,
+        "role": role,
+        "text": text,
+        "timestamp": timestamp_iso,
+    }
+
+    broker_payload: Dict[str, Any] = {
+        "event": "CHAT_MESSAGE",
+        "incident_id": incident_id,
+        "message": message_envelope,
+    }
+
+    if not get_broker().publish_event("map_updates", broker_payload):
+        current_app.logger.warning("incident chat publish failed", extra={"incident_id": incident_id, "message_id": chat_event.id})
+
+    return jsonify({"status": "delivered"}), 201
 
 
 @bp.post("")
