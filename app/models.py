@@ -26,6 +26,7 @@ from sqlalchemy import func
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.ext.mutable import MutableDict
 
 from .extensions import db
 
@@ -110,7 +111,7 @@ class Address(db.Model):
     link: str = db.Column(db.String(512), nullable=True)
     category: str = db.Column(db.String(128), nullable=True)
     zone_id = db.Column(db.Integer, db.ForeignKey('zone.id'), nullable=True)
-    zone = db.relationship('Zone', lazy='joined')
+    zone = db.relationship('Zone', lazy='selectin')
     photo: str = db.Column(db.String(128), nullable=True)
     ai_tags = db.Column(db.JSON().with_variant(JSONB, 'postgresql'), nullable=True)
     priority = db.Column(db.Integer, nullable=True)
@@ -190,7 +191,7 @@ class PendingMarker(db.Model):
     link: str = db.Column(db.String(512), nullable=True)
     category: str = db.Column(db.String(128), nullable=True)
     zone_id = db.Column(db.Integer, db.ForeignKey('zone.id'), nullable=True)
-    zone = db.relationship('Zone', lazy='joined')
+    zone = db.relationship('Zone', lazy='selectin')
     photo: str = db.Column(db.String(128), nullable=True)
     ai_tags = db.Column(db.JSON().with_variant(JSONB, 'postgresql'), nullable=True)
     priority = db.Column(db.Integer, nullable=True)
@@ -312,7 +313,7 @@ class Object(db.Model):
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     cameras = db.relationship(
-        'ObjectCamera', backref='object', lazy='joined', cascade='all, delete-orphan'
+        'ObjectCamera', backref='object', lazy='selectin', cascade='all, delete-orphan'
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -392,7 +393,7 @@ class Incident(db.Model):
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Отношения
-    object = db.relationship('Object', lazy='joined')
+    object = db.relationship('Object', lazy='selectin')
     events = db.relationship('IncidentEvent', backref='incident', lazy='selectin', cascade='all, delete-orphan')
     assignments = db.relationship('IncidentAssignment', backref='incident', lazy='selectin', cascade='all, delete-orphan')
 
@@ -430,21 +431,35 @@ class IncidentEvent(db.Model):
     id: int = db.Column(db.Integer, primary_key=True)
     incident_id: int = db.Column(db.Integer, db.ForeignKey('incidents.id'), nullable=False, index=True)
     event_type: str = db.Column(db.String(64), nullable=False)
-    payload_json: str = db.Column(db.Text, nullable=True)
+    payload = db.Column(MutableDict.as_mutable(db.JSON().with_variant(JSONB, 'postgresql')), nullable=True)
     ts = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    def payload(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.payload_json or '{}') if self.payload_json else {}
-        except Exception:
-            return {}
+    @property
+    def payload_json(self) -> Optional[str]:
+        if self.payload is None:
+            return None
+        return json.dumps(self.payload, ensure_ascii=False)
+
+    @payload_json.setter
+    def payload_json(self, value: Optional[Any]) -> None:
+        if value is None:
+            self.payload = None
+        elif isinstance(value, dict):
+            self.payload = value
+        elif isinstance(value, str):
+            try:
+                self.payload = json.loads(value) if value else {}
+            except Exception:
+                self.payload = {}
+        else:
+            self.payload = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             'id': self.id,
             'incident_id': self.incident_id,
             'event_type': self.event_type,
-            'payload': self.payload(),
+            'payload': self.payload or {},
             'ts': self.ts.isoformat() if self.ts else None,
         }
 
@@ -473,7 +488,7 @@ class IncidentAssignment(db.Model):
     resolved_at = db.Column(db.DateTime, nullable=True)
     closed_at = db.Column(db.DateTime, nullable=True)
 
-    shift = db.relationship('DutyShift', lazy='joined')
+    shift = db.relationship('DutyShift', lazy='selectin')
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -652,13 +667,27 @@ class DutyEvent(db.Model):
     ts = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     event_type = db.Column(db.String(64), index=True, nullable=False)
     actor = db.Column(db.String(16), default='system')  # user/admin/system
-    payload_json = db.Column(db.Text, nullable=True)
+    payload = db.Column(MutableDict.as_mutable(db.JSON().with_variant(JSONB, 'postgresql')), nullable=True)
 
-    def payload(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.payload_json or '{}') if self.payload_json else {}
-        except Exception:
-            return {}
+    @property
+    def payload_json(self) -> Optional[str]:
+        if self.payload is None:
+            return None
+        return json.dumps(self.payload, ensure_ascii=False)
+
+    @payload_json.setter
+    def payload_json(self, value: Optional[Any]) -> None:
+        if value is None:
+            self.payload = None
+        elif isinstance(value, dict):
+            self.payload = value
+        elif isinstance(value, str):
+            try:
+                self.payload = json.loads(value) if value else {}
+            except Exception:
+                self.payload = {}
+        else:
+            self.payload = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -668,7 +697,7 @@ class DutyEvent(db.Model):
             'ts': self.ts.isoformat() if self.ts else None,
             'event_type': self.event_type,
             'actor': self.actor,
-            'payload': self.payload(),
+            'payload': self.payload or {},
         }
 
 
@@ -880,16 +909,30 @@ class DutyNotification(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     kind = db.Column(db.String(32), index=True, nullable=False)
     text = db.Column(db.String(4096), nullable=False)
-    payload_json = db.Column(db.Text, nullable=True)
+    payload = db.Column(MutableDict.as_mutable(db.JSON().with_variant(JSONB, 'postgresql')), nullable=True)
 
     acked = db.Column(db.Boolean, default=False, index=True)
     acked_at = db.Column(db.DateTime, nullable=True)
 
-    def payload(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.payload_json or '{}') if self.payload_json else {}
-        except Exception:
-            return {}
+    @property
+    def payload_json(self) -> Optional[str]:
+        if self.payload is None:
+            return None
+        return json.dumps(self.payload, ensure_ascii=False)
+
+    @payload_json.setter
+    def payload_json(self, value: Optional[Any]) -> None:
+        if value is None:
+            self.payload = None
+        elif isinstance(value, dict):
+            self.payload = value
+        elif isinstance(value, str):
+            try:
+                self.payload = json.loads(value) if value else {}
+            except Exception:
+                self.payload = {}
+        else:
+            self.payload = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -898,7 +941,7 @@ class DutyNotification(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'kind': self.kind,
             'text': self.text,
-            'payload': self.payload(),
+            'payload': self.payload or {},
         }
 
 
@@ -1428,7 +1471,7 @@ class TrackerAlert(db.Model):
     severity = db.Column(db.String(16), default='warn', index=True)   # info/warn/crit
 
     message = db.Column(db.String(256), nullable=True)
-    payload_json = db.Column(db.Text, nullable=True)
+    payload = db.Column(MutableDict.as_mutable(db.JSON().with_variant(JSONB, 'postgresql')), nullable=True)
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
@@ -1441,11 +1484,25 @@ class TrackerAlert(db.Model):
     closed_at = db.Column(db.DateTime, nullable=True)
     closed_by = db.Column(db.String(64), nullable=True)
 
-    def payload(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.payload_json or '{}') if self.payload_json else {}
-        except Exception:
-            return {}
+    @property
+    def payload_json(self) -> Optional[str]:
+        if self.payload is None:
+            return None
+        return json.dumps(self.payload, ensure_ascii=False)
+
+    @payload_json.setter
+    def payload_json(self, value: Optional[Any]) -> None:
+        if value is None:
+            self.payload = None
+        elif isinstance(value, dict):
+            self.payload = value
+        elif isinstance(value, str):
+            try:
+                self.payload = json.loads(value) if value else {}
+            except Exception:
+                self.payload = {}
+        else:
+            self.payload = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1455,7 +1512,7 @@ class TrackerAlert(db.Model):
             'kind': self.kind,
             'severity': self.severity,
             'message': self.message,
-            'payload': self.payload(),
+            'payload': self.payload or {},
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'is_active': self.is_active,
@@ -1513,13 +1570,27 @@ class TrackerAdminAudit(db.Model):
     device_id = db.Column(db.String(32), nullable=True)
     user_id = db.Column(db.String(32), nullable=True)
 
-    payload_json = db.Column(db.Text, nullable=True)
+    payload = db.Column(MutableDict.as_mutable(db.JSON().with_variant(JSONB, 'postgresql')), nullable=True)
 
-    def payload(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.payload_json or '{}') if self.payload_json else {}
-        except Exception:
-            return {}
+    @property
+    def payload_json(self) -> Optional[str]:
+        if self.payload is None:
+            return None
+        return json.dumps(self.payload, ensure_ascii=False)
+
+    @payload_json.setter
+    def payload_json(self, value: Optional[Any]) -> None:
+        if value is None:
+            self.payload = None
+        elif isinstance(value, dict):
+            self.payload = value
+        elif isinstance(value, str):
+            try:
+                self.payload = json.loads(value) if value else {}
+            except Exception:
+                self.payload = {}
+        else:
+            self.payload = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1529,7 +1600,7 @@ class TrackerAdminAudit(db.Model):
             'action': self.action,
             'device_id': self.device_id,
             'user_id': self.user_id,
-            'payload': self.payload(),
+            'payload': self.payload or {},
         }
 
 
@@ -1563,13 +1634,27 @@ class AdminAuditLog(db.Model):
     path = db.Column(db.String(255), nullable=True)
 
     action = db.Column(db.String(64), nullable=False)
-    payload_json = db.Column(db.Text, nullable=True)
+    payload = db.Column(MutableDict.as_mutable(db.JSON().with_variant(JSONB, 'postgresql')), nullable=True)
 
-    def payload(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.payload_json or '{}') if self.payload_json else {}
-        except Exception:
-            return {}
+    @property
+    def payload_json(self) -> Optional[str]:
+        if self.payload is None:
+            return None
+        return json.dumps(self.payload, ensure_ascii=False)
+
+    @payload_json.setter
+    def payload_json(self, value: Optional[Any]) -> None:
+        if value is None:
+            self.payload = None
+        elif isinstance(value, dict):
+            self.payload = value
+        elif isinstance(value, str):
+            try:
+                self.payload = json.loads(value) if value else {}
+            except Exception:
+                self.payload = {}
+        else:
+            self.payload = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1581,5 +1666,5 @@ class AdminAuditLog(db.Model):
             'method': self.method,
             'path': self.path,
             'action': self.action,
-            'payload': self.payload(),
+            'payload': self.payload or {},
         }

@@ -14,13 +14,16 @@ from datetime import datetime
 import json
 from typing import Any, Dict, List, Optional
 
-from flask import request, jsonify, abort, session, current_app
+from pydantic import ValidationError
+
+from flask import request, jsonify, abort, session, current_app, Response
 
 from ..helpers import require_admin
 from ..extensions import db
 from ..realtime.hub import broadcast_sync
 from ..security.rate_limit import check_rate_limit
 from ..models import Incident, IncidentEvent, IncidentAssignment, DutyShift, TrackerDevice, Object
+from ..schemas import IncidentCreateSchema
 
 from . import bp
 
@@ -175,7 +178,7 @@ def _get_current_user() -> tuple[str, str]:
 
 
 @bp.post("")
-def api_incidents_create():
+def api_incidents_create() -> tuple[Response, int] | Response:
     """Создать новый инцидент.
 
     Доступно только администраторам. Клиент отправляет JSON с
@@ -196,12 +199,29 @@ def api_incidents_create():
     if rl is not None:
         return rl
     payload: Dict[str, Any] = request.get_json(silent=True, force=True) or {}
+
+    # Pydantic validation (FastAPI-style): validates key contract fields.
+    candidate_location = (payload.get("location") or payload.get("address") or "").strip()
+    if not candidate_location and payload.get("lat") is not None and payload.get("lon") is not None:
+        candidate_location = f"{payload.get('lat')},{payload.get('lon')}"
+    candidate_title = (payload.get("title") or payload.get("address") or "Incident").strip()
+    candidate_description = (payload.get("description") or "No description").strip()
+    try:
+        contract = IncidentCreateSchema.model_validate({
+            "title": candidate_title,
+            "description": candidate_description,
+            "level": payload.get("level", payload.get("priority", 3)),
+            "location": candidate_location or "Unknown",
+        })
+    except ValidationError as e:
+        return jsonify({"error": "Validation failed", "details": e.errors()}), 400
+
     object_id = payload.get("object_id")
     lat = payload.get("lat")
     lon = payload.get("lon")
-    address = (payload.get("address") or "").strip() or None
-    description = (payload.get("description") or "").strip() or None
-    priority = payload.get("priority")
+    address = (payload.get("address") or contract.location).strip() or None
+    description = contract.description
+    priority = contract.level
 
     # Нормализуем приоритет (по умолчанию 3)
     try:
