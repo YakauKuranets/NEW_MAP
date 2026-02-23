@@ -7,7 +7,7 @@ import os
 from flask import Flask, jsonify, redirect, request
 
 from .config import Config
-from .extensions import db
+from .extensions import db, init_celery
 
 
 def _register_blueprints(app: Flask) -> None:
@@ -126,6 +126,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.config.from_object(config_class)
 
     db.init_app(app)
+    init_celery(app)
 
     with app.app_context():
         from . import models  # noqa: F401

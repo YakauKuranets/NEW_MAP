@@ -34,6 +34,7 @@ from ..sockets import broadcast_event_sync
 from ..security.api_keys import require_bot_api_key
 from ..security.rate_limit import check_rate_limit
 from ..services.ai_vision_service import analyze_incident_photo
+from ..services.voice_service import enqueue_voice_incident
 
 
 def _validate_telegram_init_data(init_data: str, bot_token: str) -> bool:
@@ -102,6 +103,29 @@ def _schedule_ai_vision_for_pending(pending_id: int, photo_value: Optional[str])
 # ---------------------------------------------------------------------------
 # Вспомогательная функция поиска дубликатов в базе данных
 # ---------------------------------------------------------------------------
+
+@bp.post('/voice')
+def bot_voice_incident() -> Response:
+    """Принять аудио, поставить AI-обработку в очередь и быстро вернуть 202."""
+    require_bot_api_key(allow_query_param=True)
+
+    audio_file = request.files.get('audio') or request.files.get('voice') or request.files.get('file')
+    if not audio_file:
+        return jsonify({'error': 'audio file is required'}), 400
+
+    raw_agent = request.form.get('user_id') or request.form.get('agent_id')
+    if raw_agent is None:
+        data = request.get_json(silent=True) or {}
+        raw_agent = data.get('user_id') or data.get('agent_id')
+
+    try:
+        agent_id = int(raw_agent)
+    except Exception:
+        return jsonify({'error': 'user_id/agent_id must be integer'}), 400
+
+    result = enqueue_voice_incident(audio_file, agent_id)
+    return jsonify(result), 202
+
 
 def find_duplicate_db(name: str, lat: Optional[float], lon: Optional[float], threshold_m: int = 100) -> Optional[Dict[str, Any]]:
     """

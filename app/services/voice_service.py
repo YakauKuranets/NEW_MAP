@@ -1,65 +1,29 @@
+"""Сервис постановки голосовых инцидентов в Celery-очередь."""
+
+from __future__ import annotations
+
 import os
-import json
 import tempfile
-from openai import OpenAI
+from typing import Any
 
-# Инициализируем клиента OpenAI (ключ должен быть в .env как OPENAI_API_KEY)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from werkzeug.datastructures import FileStorage
+
+from ..tasks import process_voice_incident
 
 
-def process_voice_message(audio_bytes: bytes) -> dict:
-    """
-    1. Переводит аудио в текст (Whisper).
-    2. Извлекает из текста сущности (LLM).
-    Возвращает словарь: {'category': '...', 'address': '...', 'description': '...'}
-    """
+def enqueue_voice_incident(audio_file: FileStorage, agent_id: int) -> dict[str, Any]:
+    """Сохранить входящее аудио во временный файл и отправить задачу в Celery."""
+    suffix = ".ogg"
+    filename = (audio_file.filename or "").lower()
+    if "." in filename:
+        suffix = "." + filename.rsplit(".", 1)[1]
 
-    # Telegram присылает файлы в формате OGG (кодек Opus).
-    # OpenAI API требует, чтобы у файла было правильное расширение, поэтому используем tempfile.
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_audio:
-        temp_audio.write(audio_bytes)
-        temp_audio_path = temp_audio.name
+    temp_dir = os.path.join(tempfile.gettempdir(), "mapv12_voice")
+    os.makedirs(temp_dir, exist_ok=True)
 
-    try:
-        # ШАГ 1: Speech-to-Text (Whisper)
-        with open(temp_audio_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                language="ru"  # Принудительно ставим русский для скорости
-            )
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, dir=temp_dir) as tmp:
+        audio_file.save(tmp)
+        path = tmp.name
 
-        text = transcript.text
-        if not text:
-            return {"error": "Не удалось распознать текст"}
-
-        # ШАГ 2: LLM извлекает сущности и отдает строгий JSON
-        system_prompt = """
-        Ты — ИИ-диспетчер экстренной службы. Проанализируй текст инцидента.
-        Твоя задача — вернуть СТРОГИЙ JSON без markdown разметки.
-        Поля:
-        - category: одна из [Пожар, ДТП, Инфраструктура, Другое]
-        - address: извлеченный адрес или null, если не указан
-        - description: краткое, четкое описание инцидента (максимум 2 предложения)
-        """
-
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini",  # Быстрая и дешевая модель
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Текст: {text}"}
-            ],
-            response_format={"type": "json_object"}  # Гарантирует, что вернется JSON
-        )
-
-        response_content = completion.choices[0].message.content
-        return json.loads(response_content)
-
-    except Exception as e:
-        print(f"Ошибка в voice_service: {e}")
-        return {"error": str(e)}
-
-    finally:
-        # Обязательно удаляем временный файл
-        if os.path.exists(temp_audio_path):
-            os.remove(temp_audio_path)
+    task = process_voice_incident.delay(path, int(agent_id))
+    return {"status": "processing", "task_id": task.id}
