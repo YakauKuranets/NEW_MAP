@@ -429,6 +429,18 @@ fun pair(code: String): PairResult {
 
 
 
+
+    fun relayMeshPayload(payload: JSONObject): Boolean {
+        val token = deviceToken()
+        return try {
+            val res = post("/api/mesh-relay", payload, token)
+            res.optBoolean("ok", true)
+        } catch (e: Exception) {
+            try { StatusStore.setLastError(ctx, "mesh-relay: ${e.message}") } catch (_: Exception) {}
+            false
+        }
+    }
+
     fun openRealtimeSocket(listener: RealtimeEventListener): WebSocket {
         val wsBase = baseUrl().replaceFirst("http://", "ws://").replaceFirst("https://", "wss://")
         val req = Request.Builder().url("$wsBase/ws").build()

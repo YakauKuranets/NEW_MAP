@@ -1,112 +1,140 @@
 package com.mapv12.dutytracker
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import android.util.Log
 import com.google.android.gms.nearby.Nearby
-import com.google.android.gms.nearby.connection.*
+import com.google.android.gms.nearby.connection.AdvertisingOptions
+import com.google.android.gms.nearby.connection.ConnectionInfo
+import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
+import com.google.android.gms.nearby.connection.ConnectionResolution
+import com.google.android.gms.nearby.connection.ConnectionsClient
+import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
+import com.google.android.gms.nearby.connection.DiscoveryOptions
+import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback
+import com.google.android.gms.nearby.connection.Payload
+import com.google.android.gms.nearby.connection.PayloadCallback
+import com.google.android.gms.nearby.connection.PayloadTransferUpdate
+import com.google.android.gms.nearby.connection.Strategy
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.util.Collections
 
-class MeshNetworkManager(private val context: Context, private val myUserId: String) {
+class MeshNetworkManager(private val context: Context) {
 
-    private val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
-    private val STRATEGY = Strategy.P2P_STAR // Топология "Звезда" (идеально для раций/трекеров)
-    private val SERVICE_ID = "com.mapv12.dutytracker.MESH"
+    val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
 
-    private val connectedEndpoints = mutableSetOf<String>()
+    private val strategy = Strategy.P2P_STAR
+    private val serviceId = "com.agency.v4.mesh"
+    private val endpointName = "${Build.MODEL}_${Build.ID}"
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Коллбэк для входящих данных от других устройств (без интернета)
+    val connectedPeers = Collections.synchronizedList(mutableListOf<String>())
+
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            if (payload.type == Payload.Type.BYTES) {
-                val dataStr = payload.asBytes()?.let { String(it) }
-                Log.d("MeshNetwork", "Получены данные от $endpointId: $dataStr")
-                // TODO: Здесь мы будем сохранять чужие координаты в локальную Room БД,
-                // чтобы потом UploadWorker отправил их на сервер, когда появится интернет.
+            if (payload.type != Payload.Type.BYTES) return
+            val rawData = payload.asBytes()?.toString(Charsets.UTF_8) ?: return
+
+            val packet = try {
+                JSONObject(rawData)
+            } catch (e: Exception) {
+                Log.w("MeshNetwork", "Invalid JSON payload from $endpointId", e)
+                return
+            }
+
+            val ttl = packet.optInt("ttl", 0)
+            if (ttl <= 0) {
+                Log.d("MeshNetwork", "Drop packet from $endpointId because ttl=$ttl")
+                return
+            }
+            packet.put("ttl", ttl - 1)
+
+            managerScope.launch {
+                if (isInternetAvailable()) {
+                    ApiClient(context).relayMeshPayload(packet)
+                } else {
+                    relayToOtherPeers(packet, endpointId)
+                }
             }
         }
 
-        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
     }
 
-    // Коллбэк установки соединения
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
-            Log.d("MeshNetwork", "Подключаемся к: ${connectionInfo.endpointName}")
-            // Автоматически принимаем соединение (Zero-Touch, без подтверждения на экране)
             connectionsClient.acceptConnection(endpointId, payloadCallback)
         }
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
-            if (result.status.isSuccess) {
-                Log.d("MeshNetwork", "Соединение с $endpointId установлено!")
-                connectedEndpoints.add(endpointId)
-
-                // TODO: При успешном коннекте, если у нас НЕТ интернета,
-                // мы скидываем этому устройству наши неотправленные точки.
+            if (result.status.isSuccess && !connectedPeers.contains(endpointId)) {
+                connectedPeers.add(endpointId)
             }
         }
 
         override fun onDisconnected(endpointId: String) {
-            Log.d("MeshNetwork", "Отключились от $endpointId")
-            connectedEndpoints.remove(endpointId)
+            connectedPeers.remove(endpointId)
         }
     }
 
-    // Начинаем "раздавать" себя (Advertising)
-    fun startAdvertising() {
-        val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
-        connectionsClient.startAdvertising(
-            myUserId, // Имя конечной точки (используем наш ID)
-            SERVICE_ID,
-            connectionLifecycleCallback,
-            options
-        ).addOnSuccessListener {
-            Log.d("MeshNetwork", "Advertising запущен (Я в эфире)")
-        }.addOnFailureListener {
-            Log.e("MeshNetwork", "Ошибка Advertising", it)
-        }
+    fun startMesh() {
+        startAdvertising()
+        startDiscovery()
     }
 
-    // Начинаем искать коллег поблизости (Discovery)
-    fun startDiscovery() {
-        val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
+    private fun startAdvertising() {
+        val options = AdvertisingOptions.Builder().setStrategy(strategy).build()
+        connectionsClient.startAdvertising(endpointName, serviceId, connectionLifecycleCallback, options)
+    }
+
+    private fun startDiscovery() {
+        val options = DiscoveryOptions.Builder().setStrategy(strategy).build()
         connectionsClient.startDiscovery(
-            SERVICE_ID,
+            serviceId,
             object : EndpointDiscoveryCallback() {
                 override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-                    Log.d("MeshNetwork", "Найден коллега: ${info.endpointName}. Пробуем подключиться...")
-                    connectionsClient.requestConnection(myUserId, endpointId, connectionLifecycleCallback)
+                    connectionsClient.requestConnection(endpointName, endpointId, connectionLifecycleCallback)
                 }
 
-                override fun onEndpointLost(endpointId: String) {
-                    Log.d("MeshNetwork", "Коллега пропал с радаров: $endpointId")
-                }
+                override fun onEndpointLost(endpointId: String) = Unit
             },
             options
-        ).addOnSuccessListener {
-            Log.d("MeshNetwork", "Discovery запущен (Ищу коллег)")
-        }.addOnFailureListener {
-            Log.e("MeshNetwork", "Ошибка Discovery", it)
-        }
+        )
     }
 
-    // Функция отправки пакета другому узлу
-    fun sendDataToNetwork(jsonData: String) {
-        val payload = Payload.fromBytes(jsonData.toByteArray())
-        if (connectedEndpoints.isNotEmpty()) {
-            // Отправляем всем подключенным в Mesh-сети
-            connectionsClient.sendPayload(connectedEndpoints.toList(), payload)
-            Log.d("MeshNetwork", "Данные отправлены в Mesh-сеть")
-        } else {
-            Log.d("MeshNetwork", "Нет подключенных коллег для отправки")
-        }
+    fun broadcastEmergency(jsonPayload: String): Boolean {
+        val targets = connectedPeers.toList()
+        if (targets.isEmpty()) return false
+        val payload = Payload.fromBytes(jsonPayload.toByteArray(Charsets.UTF_8))
+        connectionsClient.sendPayload(targets, payload)
+        return true
     }
 
-    // Остановка всех сетевых операций
+    private fun isInternetAvailable(): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val network = cm.activeNetwork ?: return false
+        val capabilities = cm.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun relayToOtherPeers(packet: JSONObject, sourceEndpointId: String) {
+        val relayTargets = connectedPeers.filter { it != sourceEndpointId }
+        if (relayTargets.isEmpty()) return
+
+        val payload = Payload.fromBytes(packet.toString().toByteArray(Charsets.UTF_8))
+        connectionsClient.sendPayload(relayTargets, payload)
+    }
+
     fun stopAll() {
         connectionsClient.stopAdvertising()
         connectionsClient.stopDiscovery()
         connectionsClient.stopAllEndpoints()
-        connectedEndpoints.clear()
-        Log.d("MeshNetwork", "Mesh-сеть остановлена")
+        connectedPeers.clear()
     }
 }

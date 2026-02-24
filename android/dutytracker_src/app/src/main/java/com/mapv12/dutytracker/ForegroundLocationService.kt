@@ -377,11 +377,9 @@ open class ForegroundLocationService : Service() {
 
         // --- MESH NETWORK INIT ---
         if (meshManager == null) {
-            val sessionId = SessionStore.getSessionId(applicationContext) ?: "unknown_user_${System.currentTimeMillis()}"
-            meshManager = MeshNetworkManager(applicationContext, sessionId)
+            meshManager = MeshNetworkManager(applicationContext)
         }
-        meshManager?.startAdvertising()
-        meshManager?.startDiscovery()
+        meshManager?.startMesh()
         // -------------------------
 
         val req = buildRequest()

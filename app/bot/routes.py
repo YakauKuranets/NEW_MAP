@@ -12,10 +12,12 @@ import json
 import os
 import uuid
 import time
+import tempfile
 from threading import Thread
 from typing import Any, Dict, List, Optional
 
 import requests
+from openai import OpenAI
 from flask import Response, jsonify, request, current_app, render_template, g
 
 from sqlalchemy.exc import OperationalError
@@ -32,7 +34,7 @@ from ..security.api_keys import require_bot_api_key
 from ..security.rate_limit import check_rate_limit
 from ..services.ai_vision_service import analyze_incident_photo
 from ..services.voice_service import enqueue_voice_incident
-from .middlewares.telegram_webapp_security import enforce_telegram_init_data
+from .middlewares.telegram_webapp_security import enforce_telegram_init_data, validate_telegram_init_data
 
 
 
@@ -94,6 +96,70 @@ def bot_twa_security_middleware() -> Response | None:
         return enforce_telegram_init_data()
     return None
 
+
+
+
+@bp.post('/voice_camera_submit')
+def bot_voice_camera_submit() -> Response:
+    """Telegram Mini App: принять голос + координаты, сделать STT через Whisper."""
+    audio_file = request.files.get('audio')
+    if not audio_file:
+        return jsonify({'error': 'audio file is required'}), 400
+
+    lat_raw = request.form.get('lat')
+    lon_raw = request.form.get('lon')
+    lat = parse_coord(lat_raw)
+    lon = parse_coord(lon_raw)
+
+    init_data = (
+        request.form.get('initData')
+        or request.headers.get('X-Telegram-Init-Data')
+        or request.args.get('initData')
+        or ''
+    ).strip()
+    bot_token = (current_app.config.get('TELEGRAM_BOT_TOKEN') or '').strip()
+    if not validate_telegram_init_data(init_data, bot_token):
+        return jsonify({'error': 'forbidden'}), 403
+
+    # photo может прийти как base64-строка либо как файл (обрабатывается на следующих шагах пайплайна)
+    photo_b64 = (request.form.get('photo') or '').strip()
+    photo_file = request.files.get('photo')
+
+    temp_path: Optional[str] = None
+    try:
+        ext = os.path.splitext(audio_file.filename or '')[1] or '.webm'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            audio_file.save(tmp.name)
+            temp_path = tmp.name
+
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        with open(temp_path, 'rb') as af:
+            transcript = client.audio.transcriptions.create(
+                model='whisper-1',
+                file=af,
+                language='ru',
+            )
+
+        transcript_text = (getattr(transcript, 'text', '') or '').strip()
+        if not transcript_text:
+            return jsonify({'error': 'stt_empty'}), 422
+
+        return jsonify({
+            'ok': True,
+            'transcript': transcript_text,
+            'lat': lat,
+            'lon': lon,
+            'photo_mode': 'base64' if photo_b64 else ('file' if photo_file else None),
+        }), 200
+    except Exception as exc:
+        current_app.logger.exception('voice_camera_submit failed')
+        return jsonify({'error': 'voice_camera_submit_failed', 'details': str(exc)}), 500
+    finally:
+        try:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
 
 @bp.post('/voice')
 def bot_voice_incident() -> Response:

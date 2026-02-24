@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -32,12 +33,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.mapv12.dutytracker.ui.theme.DutyTrackerTheme
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 
 private enum class MainTab { DASHBOARD, MAP, CHAT }
@@ -95,8 +100,9 @@ private fun TacticalTerminalApp(onStartTracking: () -> Unit, onStopTracking: () 
 }
 
 @Composable
-fun DashboardScreen(modifier: Modifier = Modifier, onStartTracking: () -> Unit, onStopTracking: () -> Unit) {
+fun DashboardScreen(modifier: Modifier = Modifier, onStartTracking: () -> Unit, onStopTracking: () -> Unit, vm: DashboardViewModel = viewModel()) {
     val ctx = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     var coords by remember { mutableStateOf("—") }
 
     val requiredPermissions = remember {
@@ -140,10 +146,37 @@ fun DashboardScreen(modifier: Modifier = Modifier, onStartTracking: () -> Unit, 
         }
     }
 
+    val scannerPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            ctx.startActivity(Intent(ctx, ScannerActivity::class.java))
+        } else {
+            Toast.makeText(ctx, "Нужно разрешение на камеру для сканера", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun openScanner() {
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            ctx.startActivity(Intent(ctx, ScannerActivity::class.java))
+        } else {
+            scannerPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     LaunchedEffect(Unit) {
         coords = withContext(Dispatchers.IO) {
             val last = StatusStore.getLastLatLon(ctx)
             if (last == null) "—" else "%.6f, %.6f".format(last.first, last.second)
+        }
+    }
+
+    LaunchedEffect(vm) {
+        vm.events.collect { event ->
+            when (event) {
+                is SosUiEvent.ShowToast -> Toast.makeText(ctx, event.message, Toast.LENGTH_LONG).show()
+                SosUiEvent.FallbackMesh -> haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
         }
     }
 
@@ -165,6 +198,25 @@ fun DashboardScreen(modifier: Modifier = Modifier, onStartTracking: () -> Unit, 
             Button(onClick = onStopTracking, modifier = Modifier.weight(1f)) {
                 Text("🔴 Закончить")
             }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = { openScanner() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("👁️ Сканер")
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = { vm.onSosClicked() },
+            colors = ButtonDefaults.buttonColors(containerColor = androidx.compose.ui.graphics.Color(0xFFB71C1C)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+        ) {
+            Text("SOS", style = MaterialTheme.typography.headlineSmall)
         }
     }
 }
