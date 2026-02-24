@@ -34,4 +34,18 @@ describe('useMapStore', () => {
       expect.objectContaining({ id: 'm-1', sender: 'agent' }),
     ]);
   });
+
+  test('normalizes violation flag in agent payload', () => {
+    const state = useMapStore.getState();
+
+    state.updateAgent({ agent_id: 'a-2', lat: 53.91, lon: 27.57, inside_polygon: true });
+    expect(useMapStore.getState().agents['a-2']).toEqual(
+      expect.objectContaining({ inside_polygon: true, isViolation: true }),
+    );
+
+    state.updateAgent({ agent_id: 'a-2', inside_polygon: false });
+    expect(useMapStore.getState().agents['a-2']).toEqual(
+      expect.objectContaining({ inside_polygon: false, isViolation: false }),
+    );
+  });
 });

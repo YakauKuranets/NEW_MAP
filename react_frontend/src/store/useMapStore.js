@@ -15,6 +15,15 @@ const initialState = {
 };
 
 const getEntityId = (item) => item?.id ?? item?.incident_id ?? item?.pending ?? item?.pending_id;
+const getViolationFlag = (data, fallback) => {
+  if (typeof data?.isViolation === 'boolean') return data.isViolation;
+  if (typeof data?.violation === 'boolean') return data.violation;
+  if (typeof data?.in_violation === 'boolean') return data.in_violation;
+  if (typeof data?.zone_violation === 'boolean') return data.zone_violation;
+  if (typeof data?.inside_polygon === 'boolean') return data.inside_polygon;
+  if (typeof fallback === 'boolean') return fallback;
+  return false;
+};
 
 const useMapStore = create((set) => ({
   ...initialState,
@@ -28,6 +37,7 @@ const useMapStore = create((set) => ({
       ...(state.agents[agentId] || {}),
       ...data,
       agent_id: agentId,
+      isViolation: getViolationFlag(data, state.agents[agentId]?.isViolation),
     };
 
     return {

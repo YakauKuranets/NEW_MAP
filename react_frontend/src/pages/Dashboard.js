@@ -7,6 +7,7 @@ import ObjectInspector from '../components/ObjectInspector';
 import IncidentChat from '../components/IncidentChat';
 import IncidentChatPanel from '../components/IncidentChatPanel';
 import PendingRequestsPanel from '../components/PendingRequestsPanel';
+import SmartFilterPanel from '../components/SmartFilterPanel';
 import useMapStore from '../store/useMapStore';
 
 export default function Dashboard() {
@@ -15,6 +16,12 @@ export default function Dashboard() {
   const [theme, setTheme] = useState('dark');
   const [flyToTarget, setFlyToTarget] = useState(null);
   const [activeChatIncidentId, setActiveChatIncidentId] = useState(null);
+  const [filters, setFilters] = useState({
+    showAgents: true,
+    showCameras: true,
+    showIncidents: true,
+    showPending: true,
+  });
 
   const trackers = useMapStore((s) => s.trackers);
 
@@ -36,11 +43,13 @@ export default function Dashboard() {
                 flyToTarget={flyToTarget}
                 onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 onUserClick={(id) => setActiveObjectId(id)}
+                filters={filters}
               />
             </div>
             <IncidentFeed theme={theme} />
             <IncidentChat />
             <PendingRequestsPanel onFlyToPending={setFlyToTarget} />
+            <SmartFilterPanel filters={filters} onFiltersChange={setFilters} />
           </>
         );
       case 'agents':

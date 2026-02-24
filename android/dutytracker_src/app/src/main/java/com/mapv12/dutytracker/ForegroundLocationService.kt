@@ -39,7 +39,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-class ForegroundLocationService : Service() {
+open class ForegroundLocationService : Service() {
 
     companion object {
         const val ACTION_START = "com.mapv12.dutytracker.ACTION_START"
@@ -47,7 +47,7 @@ class ForegroundLocationService : Service() {
         const val ACTION_UPDATE_MODE = "com.mapv12.dutytracker.ACTION_UPDATE_MODE"
 
         private const val NOTIF_ID = 2001
-        private const val CH_ID = "dutytracker_location"
+        private const val CH_ID = "TrackerChannel"
 
         const val PREF_FLAGS = "dutytracker_flags"
         const val KEY_TRACKING_ON = "tracking_on"
@@ -426,7 +426,7 @@ class ForegroundLocationService : Service() {
     private fun createChannelIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            val ch = NotificationChannel(CH_ID, "DutyTracker", NotificationManager.IMPORTANCE_LOW)
+            val ch = NotificationChannel(CH_ID, "TrackerChannel", NotificationManager.IMPORTANCE_LOW)
             nm.createNotificationChannel(ch)
         }
     }
@@ -437,8 +437,8 @@ class ForegroundLocationService : Service() {
         val queue = StatusStore.getQueue(applicationContext)
 
         return NotificationCompat.Builder(this, CH_ID)
-            .setContentTitle("DutyTracker")
-            .setContentText("Трекинг: $label · очередь: $queue")
+            .setContentTitle("DutyTracker Radar")
+            .setContentText("Локация отслеживается · режим: $label · очередь: $queue")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .build()

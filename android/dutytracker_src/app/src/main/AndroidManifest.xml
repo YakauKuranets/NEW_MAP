@@ -76,9 +76,10 @@
             android:value="@string/google_maps_key" />
 
         <service
-            android:name=".ForegroundLocationService"
+            android:name=".LocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
 
         <receiver
             android:name=".BootReceiver"

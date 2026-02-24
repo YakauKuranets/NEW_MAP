@@ -18,12 +18,12 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) : CoroutineW
 
     override suspend fun doWork() = withContext(Dispatchers.IO) {
         val ctx = applicationContext
-        val should = ForegroundLocationService.isTrackingOn(ctx)
+        val should = LocationService.isTrackingOn(ctx)
         val running = StatusStore.isServiceRunning(ctx)
         if (should && !running) {
             try {
                 JournalLogger.log(ctx, "watchdog", "restart_service", true, null, null, null)
-                val i = Intent(ctx, ForegroundLocationService::class.java)
+                val i = Intent(ctx, LocationService::class.java)
                 ContextCompat.startForegroundService(ctx, i)
             } catch (e: Exception) {
                 JournalLogger.log(ctx, "watchdog", "restart_service", false, null, e.message, null)
