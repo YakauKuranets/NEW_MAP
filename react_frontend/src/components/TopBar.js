@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Cpu, Activity, ShieldCheck, Satellite } from 'lucide-react';
+import { Cpu, Activity, ShieldCheck, Satellite, Bell } from 'lucide-react';
 import useMapStore from '../store/useMapStore';
 
 function StatusPill({ label, online = true }) {
@@ -51,10 +51,18 @@ export default function TopBar() {
             <span className="text-xs font-bold uppercase tracking-wider">{isOnline ? '[GRID: ONLINE]' : '[GRID: ISOLATED (OFFLINE)]'}</span>
           </div>
 
-          <div className="flex items-center gap-2 rounded-xl border border-yellow-300/40 bg-yellow-300/10 px-3 py-1.5 text-yellow-200">
-            <span className={`h-2.5 w-2.5 rounded-full ${pendingCount > 0 ? 'animate-pulse bg-yellow-300 shadow-[0_0_12px_rgba(252,211,77,0.9)]' : 'bg-yellow-200/50'}`} />
-            <span className="text-xs font-bold uppercase tracking-wider">Входящие сигналы: {pendingCount}</span>
-          </div>
+          {pendingCount > 0 ? (
+            <div
+              className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-yellow-300/50 bg-yellow-300/10 text-yellow-200 shadow-[0_0_12px_rgba(252,211,77,0.25)]"
+              title={`Ожидают подтверждения: ${pendingCount}`}
+              aria-label={`Ожидают подтверждения: ${pendingCount}`}
+            >
+              <Bell className="h-4 w-4" />
+              <span className="absolute -right-1.5 -top-1.5 min-w-[1.2rem] rounded-full border border-yellow-100/60 bg-yellow-300 px-1 text-center text-[10px] font-black leading-4 text-slate-900">
+                {pendingCount}
+              </span>
+            </div>
+          ) : null}
 
           <div className="flex items-center gap-2 rounded-xl border border-cyber-blue/30 bg-cyber-blue/10 px-3 py-1.5 text-cyber-blue shadow-neon">
             <Activity className="h-4 w-4" />

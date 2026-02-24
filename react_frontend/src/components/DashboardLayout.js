@@ -2,6 +2,7 @@ import React from 'react';
 import { Map, Users, Settings, Plus } from 'lucide-react';
 import TopBar from './TopBar';
 import useMapStore from '../store/useMapStore';
+import { triggerImpact } from '../utils/twaSetup';
 
 function NavButton({ active, icon, label, onClick }) {
   return (
@@ -23,6 +24,7 @@ export default function DashboardLayout({ children, activeTab, onTabChange }) {
   const setDraftMarker = useMapStore((s) => s.setDraftMarker);
 
   const handleManualAdd = () => {
+    triggerImpact('heavy');
     setDraftMarker({
       lon: 27.56,
       lat: 53.9,

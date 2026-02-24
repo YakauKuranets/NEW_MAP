@@ -145,7 +145,7 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
   }, [selectedPending, isSubmitting]);
 
   return (
-    <aside className="pointer-events-auto absolute top-20 left-4 w-80 bg-black/70 backdrop-blur-md border border-yellow-500/50 rounded-xl shadow-[0_0_15px_rgba(234,179,8,0.2)] z-40 overflow-hidden">
+    <aside className="pointer-events-auto absolute top-20 left-64 w-80 bg-black/70 backdrop-blur-md border border-yellow-500/50 rounded-xl shadow-[0_0_15px_rgba(234,179,8,0.2)] z-40 overflow-hidden">
       <div className="flex items-center gap-2 border-b border-yellow-500/30 px-3 py-2.5">
         <span className="h-2.5 w-2.5 rounded-full bg-yellow-300 animate-pulse shadow-[0_0_10px_rgba(250,204,21,0.9)]" />
         <h3 className="text-[11px] font-black uppercase tracking-[0.16em] text-yellow-100">ОЖИДАЮТ ПОДТВЕРЖДЕНИЯ</h3>
@@ -164,9 +164,18 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
           return (
             <div
               key={markerId}
-              className={`rounded-lg border p-2.5 ${isActive ? 'border-yellow-300/70 bg-yellow-300/10' : 'border-white/10 bg-black/40'}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => focusPending(pending)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  focusPending(pending);
+                }
+              }}
+              className={`cursor-pointer rounded-lg border p-2.5 ${isActive ? 'border-yellow-300/70 bg-yellow-300/10' : 'border-white/10 bg-black/40'}`}
             >
-              <button type="button" onClick={() => focusPending(pending)} className="w-full text-left">
+              <div className="w-full text-left">
                 <div className="text-[11px] uppercase tracking-wider text-yellow-200/90">
                   {pending.reporter || pending.user_id || pending.author || 'Agent'}
                 </div>
@@ -176,12 +185,15 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
                 <div className="mt-1 text-[11px] text-slate-400">
                   {lat !== null && lon !== null ? `LAT ${lat.toFixed(5)} · LON ${lon.toFixed(5)}` : 'Координаты не указаны'}
                 </div>
-              </button>
+              </div>
 
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => approvePending(pending)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    approvePending(pending);
+                  }}
                   disabled={isSubmitting}
                   className="rounded border border-cyan-400/60 bg-cyan-500/15 px-2 py-1.5 text-[11px] font-bold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-50"
                 >
@@ -189,7 +201,10 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => rejectPending(pending)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    rejectPending(pending);
+                  }}
                   disabled={isSubmitting}
                   className="rounded border border-red-400/60 bg-red-500/15 px-2 py-1.5 text-[11px] font-bold text-red-200 transition hover:bg-red-500/25 disabled:opacity-50"
                 >
