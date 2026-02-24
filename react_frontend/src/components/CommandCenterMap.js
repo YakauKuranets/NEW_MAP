@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer } from '@deck.gl/layers';
+import { TripsLayer } from '@deck.gl/geo-layers';
 import { FlyToInterpolator } from '@deck.gl/core';
+import { EditableGeoJsonLayer } from '@nebula.gl/layers';
 import { Map } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 import useMapStore from '../store/useMapStore';
 import { initPmtiles } from '../vendor/pmtilesSetup';
+import { tripsData } from '../mocks/tripsData';
 
 const INITIAL_VIEW_STATE = {
   longitude: 27.56,
@@ -25,7 +28,7 @@ const toNumber = (value) => {
   return Number.isFinite(n) ? n : null;
 };
 
-export default function CommandCenterMap({ onUserClick, flyToTarget }) {
+export default function CommandCenterMap({ onUserClick, flyToTarget, timelineCurrentTime, geofenceFeatures, geofenceMode, onGeofenceEdit, violatingAgentIds = [] }) {
   const agentsMap = useMapStore((s) => s.agents);
   const incidents = useMapStore((s) => s.incidents);
   const pendingMarkers = useMapStore((s) => s.pendingMarkers);
@@ -72,10 +75,11 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
         const lon = toNumber(agent.lon ?? agent.longitude);
         const lat = toNumber(agent.lat ?? agent.latitude);
         if (lon === null || lat === null) return null;
-        return { ...agent, lon, lat };
+        const id = String(agent.agent_id ?? agent.id ?? agent.user_id ?? agent.vendor ?? '');
+        return { ...agent, lon, lat, isGeofenceViolation: violatingSet.has(id) };
       })
       .filter(Boolean),
-    [agents],
+    [agents, violatingSet],
   );
 
   const normalizedIncidents = useMemo(
@@ -104,6 +108,7 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
 
   const sosPulse = Math.sin(pulseTick * 0.15) * 0.5 + 0.5;
 
+
   const layers = useMemo(() => {
     const agentLayer = new ScatterplotLayer({
       id: 'agents-layer',
@@ -113,13 +118,22 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
       stroked: true,
       radiusUnits: 'meters',
       getPosition: (d) => [d.lon, d.lat],
-      getRadius: (d) => ((String(d.status || '').toLowerCase() === 'sos' || d.sos) ? 130 : 90),
-      getFillColor: (d) => ((String(d.status || '').toLowerCase() === 'sos' || d.sos)
-        ? [255, 32, 86, Math.round(160 + sosPulse * 95)]
-        : [25, 211, 255, 220]),
-      getLineColor: (d) => ((String(d.status || '').toLowerCase() === 'sos' || d.sos)
-        ? [255, 80, 120, 255]
-        : [120, 235, 255, 255]),
+      getRadius: (d) => {
+        if (d.isGeofenceViolation) return 145;
+        return ((String(d.status || '').toLowerCase() === 'sos' || d.sos) ? 130 : 90);
+      },
+      getFillColor: (d) => {
+        if (d.isGeofenceViolation) return [255, 40, 40, Math.round(160 + sosPulse * 95)];
+        return ((String(d.status || '').toLowerCase() === 'sos' || d.sos)
+          ? [255, 32, 86, Math.round(160 + sosPulse * 95)]
+          : [25, 211, 255, 220]);
+      },
+      getLineColor: (d) => {
+        if (d.isGeofenceViolation) return [255, 120, 120, 255];
+        return ((String(d.status || '').toLowerCase() === 'sos' || d.sos)
+          ? [255, 80, 120, 255]
+          : [120, 235, 255, 255]);
+      },
       lineWidthMinPixels: 1,
       radiusMinPixels: 5,
       radiusMaxPixels: 18,
@@ -147,6 +161,32 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
       },
     });
 
+    const tripsLayer = new TripsLayer({
+      id: 'trips-layer',
+      data: tripsData,
+      getPath: (d) => d.path,
+      getTimestamps: (d) => d.timestamps,
+      getColor: [253, 128, 93],
+      opacity: 0.8,
+      widthMinPixels: 5,
+      trailLength: 600,
+      currentTime: Number.isFinite(Number(timelineCurrentTime)) ? Number(timelineCurrentTime) : 0,
+    });
+
+    const geofenceLayer = new EditableGeoJsonLayer({
+      id: 'geofence-layer',
+      data: geofenceFeatures,
+      mode: geofenceMode,
+      selectedFeatureIndexes: [],
+      onEdit: ({ updatedData }) => {
+        if (onGeofenceEdit) onGeofenceEdit(updatedData);
+      },
+      getFillColor: [255, 0, 0, 80],
+      getLineColor: [255, 0, 0, 255],
+      lineWidthMinPixels: 2,
+      pickable: true,
+    });
+
     const pendingLayer = new ScatterplotLayer({
       id: 'pending-layer',
       data: normalizedPending,
@@ -170,8 +210,8 @@ export default function CommandCenterMap({ onUserClick, flyToTarget }) {
       },
     });
 
-    return [incidentLayer, pendingLayer, agentLayer];
-  }, [normalizedAgents, normalizedIncidents, normalizedPending, activePendingMarkerId, sosPulse]);
+    return [incidentLayer, pendingLayer, tripsLayer, geofenceLayer, agentLayer];
+  }, [normalizedAgents, normalizedIncidents, normalizedPending, activePendingMarkerId, sosPulse, timelineCurrentTime, geofenceFeatures, geofenceMode, onGeofenceEdit]);
 
   return (
     <div className="absolute inset-0">

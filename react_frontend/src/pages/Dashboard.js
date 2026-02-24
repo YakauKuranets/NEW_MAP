@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { ViewMode } from '@nebula.gl/edit-modes';
 import DashboardLayout from '../components/DashboardLayout';
 import CommandCenterMap from '../components/CommandCenterMap';
 import IncidentFeed from '../components/IncidentFeed';
@@ -7,7 +8,14 @@ import ObjectInspector from '../components/ObjectInspector';
 import IncidentChat from '../components/IncidentChat';
 import IncidentChatPanel from '../components/IncidentChatPanel';
 import PendingRequestsPanel from '../components/PendingRequestsPanel';
+import TimelineSlider from '../components/TimelineSlider';
+import GeofenceToolbar from '../components/GeofenceToolbar';
+import { timelineMinTime, timelineMaxTime } from '../mocks/tripsData';
+import useTimelineAnimation from '../hooks/useTimelineAnimation';
+import useGeofenceMonitor from '../hooks/useGeofenceMonitor';
 import useMapStore from '../store/useMapStore';
+
+const createEmptyGeofences = () => ({ type: 'FeatureCollection', features: [] });
 
 export default function Dashboard() {
   const [activeObjectId, setActiveObjectId] = useState(null);
@@ -15,8 +23,28 @@ export default function Dashboard() {
   const [theme, setTheme] = useState('dark');
   const [flyToTarget, setFlyToTarget] = useState(null);
   const [activeChatIncidentId, setActiveChatIncidentId] = useState(null);
+  const [geofenceFeatures, setGeofenceFeatures] = useState(() => createEmptyGeofences());
+  const [geofenceMode, setGeofenceMode] = useState(() => ViewMode);
+
+  const {
+    currentTime: timelineTime,
+    isPlaying: isTimelinePlaying,
+    speedMultiplier: timelineSpeedMultiplier,
+    seekTime: seekTimelineTime,
+    setSpeed: setTimelineSpeed,
+    togglePlay: toggleTimelinePlay,
+  } = useTimelineAnimation({
+    minTime: timelineMinTime,
+    maxTime: timelineMaxTime,
+    initialTime: timelineMinTime,
+    loop: false,
+  });
 
   const trackers = useMapStore((s) => s.trackers);
+  const agentsMap = useMapStore((s) => s.agents);
+
+  const activeAgents = useMemo(() => Object.values(agentsMap || {}), [agentsMap]);
+  const { violatingAgentIds, alerts } = useGeofenceMonitor(activeAgents, geofenceFeatures);
 
   const selectedObjectData = useMemo(() => {
     if (!activeObjectId || !trackers[activeObjectId]) return null;
@@ -36,11 +64,41 @@ export default function Dashboard() {
                 flyToTarget={flyToTarget}
                 onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 onUserClick={(id) => setActiveObjectId(id)}
+                timelineCurrentTime={timelineTime}
+                geofenceFeatures={geofenceFeatures}
+                geofenceMode={geofenceMode}
+                onGeofenceEdit={setGeofenceFeatures}
+                violatingAgentIds={violatingAgentIds}
               />
             </div>
+
+            <GeofenceToolbar
+              mode={geofenceMode}
+              onModeChange={setGeofenceMode}
+              onClear={() => setGeofenceFeatures(createEmptyGeofences())}
+            />
+
             <IncidentFeed theme={theme} />
             <IncidentChat />
             <PendingRequestsPanel onFlyToPending={setFlyToTarget} />
+            <TimelineSlider
+              currentTime={timelineTime}
+              minTime={timelineMinTime}
+              maxTime={timelineMaxTime}
+              isPlaying={isTimelinePlaying}
+              speedMultiplier={timelineSpeedMultiplier}
+              onTogglePlay={toggleTimelinePlay}
+              onSeek={seekTimelineTime}
+              onSpeedChange={setTimelineSpeed}
+            />
+
+            <div className="absolute right-4 top-4 z-50 flex max-w-md flex-col gap-2">
+              {alerts.map((alert) => (
+                <div key={alert.id} className="rounded-md border border-red-500/60 bg-red-950/90 px-3 py-2 text-xs text-red-100 shadow-lg">
+                  {alert.message}
+                </div>
+              ))}
+            </div>
           </>
         );
       case 'agents':
@@ -56,7 +114,6 @@ export default function Dashboard() {
     <DashboardLayout activeTab={activeTab} onTabChange={setActiveTab} theme={theme}>
       <div className={`relative h-full w-full transition-colors duration-500 ${bgClass}`}>
         {renderContent()}
-
 
         {activeChatIncidentId !== null && (
           <IncidentChatPanel

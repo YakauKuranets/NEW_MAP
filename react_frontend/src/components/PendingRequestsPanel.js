@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { motion, useMotionValue } from 'framer-motion';
 import useMapStore from '../store/useMapStore';
 
 const LIST_ENDPOINT = process.env.REACT_APP_PENDING_LIST_URL || '/api/pending';
@@ -11,6 +12,17 @@ const toNumber = (value) => {
 };
 
 const resolvePendingId = (pending) => String(pending?.id ?? pending?.pending ?? pending?.pending_id ?? '');
+const SWIPE_RATIO_THRESHOLD = 0.4;
+
+const getTelegramWebApp = () => window.Telegram?.WebApp;
+
+const triggerSelectionHaptic = () => {
+  getTelegramWebApp()?.HapticFeedback?.selectionChanged?.();
+};
+
+const triggerNotificationHaptic = (kind) => {
+  getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.(kind);
+};
 
 /**
  * @typedef {{status: string, id?: number, remaining?: number}} ModerationResponse
@@ -161,10 +173,12 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
           const lon = toNumber(pending.lon ?? pending.longitude);
           const lat = toNumber(pending.lat ?? pending.latitude);
 
-          return (
-            <div
-              key={markerId}
-              className={`rounded-lg border p-2.5 ${isActive ? 'border-yellow-300/70 bg-yellow-300/10' : 'border-white/10 bg-black/40'}`}
+          const swipeCard = (
+            <SwipeablePendingCard
+              markerId={markerId}
+              isSubmitting={isSubmitting}
+              onApprove={() => approvePending(pending)}
+              onReject={() => rejectPending(pending)}
             >
               <button type="button" onClick={() => focusPending(pending)} className="w-full text-left">
                 <div className="text-[11px] uppercase tracking-wider text-yellow-200/90">
@@ -177,6 +191,15 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
                   {lat !== null && lon !== null ? `LAT ${lat.toFixed(5)} · LON ${lon.toFixed(5)}` : 'Координаты не указаны'}
                 </div>
               </button>
+            </SwipeablePendingCard>
+          );
+
+          return (
+            <div
+              key={markerId}
+              className={`rounded-lg border p-2.5 ${isActive ? 'border-yellow-300/70 bg-yellow-300/10' : 'border-white/10 bg-black/40'}`}
+            >
+              {swipeCard}
 
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
@@ -207,5 +230,82 @@ export default function PendingRequestsPanel({ onFlyToPending }) {
         ) : null}
       </div>
     </aside>
+  );
+}
+
+function SwipeablePendingCard({ markerId, children, isSubmitting, onApprove, onReject }) {
+  const cardRef = useRef(null);
+  const x = useMotionValue(0);
+  const [swipeDirection, setSwipeDirection] = useState(null);
+  const hapticDirectionRef = useRef(null);
+
+  const getThreshold = () => {
+    const width = cardRef.current?.offsetWidth || 1;
+    return width * SWIPE_RATIO_THRESHOLD;
+  };
+
+  const handleDrag = (_event, info) => {
+    const threshold = getThreshold();
+    if (info.offset.x > threshold) {
+      setSwipeDirection('approve');
+      if (hapticDirectionRef.current !== 'approve') {
+        triggerSelectionHaptic();
+        hapticDirectionRef.current = 'approve';
+      }
+      return;
+    }
+    if (info.offset.x < -threshold) {
+      setSwipeDirection('reject');
+      if (hapticDirectionRef.current !== 'reject') {
+        triggerSelectionHaptic();
+        hapticDirectionRef.current = 'reject';
+      }
+      return;
+    }
+    setSwipeDirection(null);
+    hapticDirectionRef.current = null;
+  };
+
+  const handleDragEnd = async (_event, info) => {
+    const threshold = getThreshold();
+    setSwipeDirection(null);
+    hapticDirectionRef.current = null;
+
+    if (info.offset.x > threshold) {
+      triggerNotificationHaptic('success');
+      await onApprove();
+      x.set(0);
+      return;
+    }
+    if (info.offset.x < -threshold) {
+      triggerNotificationHaptic('warning');
+      await onReject();
+      x.set(0);
+      return;
+    }
+
+    x.set(0);
+  };
+
+  return (
+    <div className="relative overflow-hidden rounded-md" ref={cardRef} data-pending-id={markerId}>
+      <div className={`pointer-events-none absolute inset-0 flex items-center px-3 text-xs font-bold ${swipeDirection === 'approve' ? 'justify-start bg-emerald-500/35 text-emerald-100' : 'justify-end bg-red-500/35 text-red-100'}`}>
+        {swipeDirection === 'approve' ? '✓ Принять' : null}
+        {swipeDirection === 'reject' ? '🗑 Отклонить' : null}
+      </div>
+      <motion.div
+        drag="x"
+        dragElastic={0.08}
+        dragMomentum={false}
+        style={{ x }}
+        className="relative bg-black/25 rounded-md px-1 py-1 touch-pan-y"
+        onDrag={handleDrag}
+        onDragEnd={handleDragEnd}
+        whileTap={{ scale: 0.995 }}
+      >
+        {children}
+      </motion.div>
+      <div className="sr-only" aria-live="polite">{isSubmitting ? 'Выполняется действие' : ''}</div>
+    </div>
   );
 }
