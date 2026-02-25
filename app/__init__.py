@@ -34,7 +34,9 @@ def _register_blueprints(app: Flask) -> None:
     from .requests import bp as requests_bp
     from .service_access import bp as service_access_bp
     from .system import bp as system_bp
+    from .terminals import bp as terminals_bp
     from .tracker import bp as tracker_bp
+    from .video import bp as video_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(bot_bp, url_prefix="/api/bot")
@@ -64,7 +66,9 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(duty_bp)
     app.register_blueprint(service_access_bp)
     app.register_blueprint(system_bp)
+    app.register_blueprint(terminals_bp)
     app.register_blueprint(tracker_bp)
+    app.register_blueprint(video_bp)
 
 
 def _register_common_routes(app: Flask) -> None:

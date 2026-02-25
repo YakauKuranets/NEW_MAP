@@ -115,9 +115,9 @@ fun DashboardScreen(modifier: Modifier = Modifier, onStartTracking: () -> Unit, 
                 add(Manifest.permission.BLUETOOTH_SCAN)
                 add(Manifest.permission.BLUETOOTH_ADVERTISE)
                 add(Manifest.permission.BLUETOOTH_CONNECT)
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.NEARBY_WIFI_DEVICES)
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }.toTypedArray()

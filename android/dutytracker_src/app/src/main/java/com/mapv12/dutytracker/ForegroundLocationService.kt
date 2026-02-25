@@ -115,7 +115,7 @@ open class ForegroundLocationService : Service() {
     }
 
     // --- MESH NETWORK ---
-    private var meshManager: MeshNetworkManager? = null
+    private var meshNetworkManager: MeshNetworkManager? = null
     // --------------------
 
     private val callback = object : LocationCallback() {
@@ -194,7 +194,7 @@ open class ForegroundLocationService : Service() {
                     if (!isNetworkAvailable()) {
                         try {
                             val json = gson.toJson(point)
-                            meshManager?.sendDataToNetwork(json)
+                            meshNetworkManager?.sendDataToNetwork(json)
                         } catch (e: Exception) {
                             Log.e("DutyTracker", "Mesh send error", e)
                         }
@@ -224,6 +224,11 @@ open class ForegroundLocationService : Service() {
         super.onCreate()
         StatusStore.setServiceRunning(applicationContext, true)
         fused = LocationServices.getFusedLocationProviderClient(this)
+
+        val userId = DeviceInfoStore.deviceId(this)
+            ?: DeviceInfoStore.userId(this)
+            ?: "UNKNOWN_DEVICE"
+        meshNetworkManager = MeshNetworkManager(this, userId)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -239,10 +244,14 @@ open class ForegroundLocationService : Service() {
             }
             ACTION_START, null -> {
                 startTracking()
+                meshNetworkManager?.startAdvertising()
+                meshNetworkManager?.startDiscovery()
                 return START_STICKY
             }
             else -> {
                 startTracking()
+                meshNetworkManager?.startAdvertising()
+                meshNetworkManager?.startDiscovery()
                 return START_STICKY
             }
         }
@@ -375,13 +384,6 @@ open class ForegroundLocationService : Service() {
         startHealthLoop()
         startWsTunnelLoop()
 
-        // --- MESH NETWORK INIT ---
-        if (meshManager == null) {
-            meshManager = MeshNetworkManager(applicationContext)
-        }
-        meshManager?.startMesh()
-        // -------------------------
-
         val req = buildRequest()
 
         try {
@@ -395,11 +397,6 @@ open class ForegroundLocationService : Service() {
     private fun stopTracking() {
         stopHealthLoop(sendFinal = true)
         stopWsTunnelLoop()
-
-        // --- MESH NETWORK STOP ---
-        meshManager?.stopAll()
-        meshManager = null
-        // -------------------------
 
         try { StatusStore.setLastHealth(applicationContext, "") } catch (_: Exception) {}
         setTrackingOn(applicationContext, false)
@@ -445,6 +442,8 @@ open class ForegroundLocationService : Service() {
 
     override fun onDestroy() {
         StatusStore.setServiceRunning(applicationContext, false)
+        meshNetworkManager?.stopAll()
+        meshNetworkManager = null
         stopTracking()
         super.onDestroy()
     }

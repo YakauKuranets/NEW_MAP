@@ -21,12 +21,25 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
 from flask import jsonify, request, Response, current_app, session
+from pydantic import BaseModel, ValidationError
 
 from ..helpers import require_admin, parse_coord
 from ..extensions import db
 from ..models import Object, ObjectCamera
 from ..security.rate_limit import check_rate_limit
+from ..services.discovery_service import AutoDiscoveryService
 from . import bp
+
+
+# -------------------------
+# Discover terminal request schema
+# -------------------------
+
+
+class DiscoverRequest(BaseModel):
+    ip: str
+    username: str
+    password: str
 
 
 # -------------------------
@@ -239,6 +252,35 @@ def _query_objects(q: str, tag: str):
         like = f"%{tag}%"
         query = query.filter(Object.tags.ilike(like))
     return query
+
+
+@bp.post('/terminals/discover')
+async def api_terminals_discover() -> Any:
+    """Probe terminal credentials once and return discovery status."""
+    require_admin("viewer")
+
+    limited = _rate_limit_or_429('terminals_discover', limit=20, window_seconds=60)
+    if limited is not None:
+        return limited
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        data = DiscoverRequest.model_validate(payload)
+    except ValidationError as exc:
+        return jsonify({
+            'status': 'error',
+            'message': 'invalid_payload',
+            'details': exc.errors(),
+        }), 400
+
+    result = await AutoDiscoveryService.probe_terminal(
+        ip=data.ip,
+        username=data.username,
+        password=data.password,
+    )
+
+    status_code = 200 if result.get('status') == 'success' else 400
+    return jsonify(result), status_code
 
 
 # -------------------------
