@@ -23,6 +23,11 @@ from starlette.concurrency import run_in_threadpool
 from .. import models
 from . import bp
 
+# ===== ДОБАВЛЕННЫЕ ИМПОРТЫ ДЛЯ АУДИТА =====
+import uuid
+from celery_worker import run_audit_task
+# ===== КОНЕЦ ДОБАВЛЕННЫХ ИМПОРТОВ =====
+
 
 def _extract_terminal_channel(channel_id: int) -> Tuple[Any, Any]:
     """Resolve (channel, terminal) from available DB models.
@@ -390,3 +395,64 @@ def video_archive_stream():
         mimetype="video/mp4",
         headers={"Cache-Control": "no-store"},
     )
+
+
+# ===== НОВЫЕ ЭНДПОИНТЫ ДЛЯ АУДИТА БЕЗОПАСНОСТИ =====
+@bp.post("/audit/start")
+def start_audit():
+    """Запускает аудит безопасности для указанной камеры."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No JSON payload"}), 400
+    
+    ip = data.get("ip")
+    port = data.get("port", 80)
+    username = data.get("username", "admin")
+    proxy_list = data.get("proxy_list")
+    use_vuln_check = data.get("use_vuln_check", True)
+
+    if not ip:
+        return jsonify({"error": "ip required"}), 400
+
+    task_id = str(uuid.uuid4())
+    
+    # Используем models.db для доступа к сессии (предполагается, что db доступен через models)
+    result = models.CameraAuditResult(
+        target_ip=ip,
+        target_port=port,
+        username=username,
+        success=False,
+        details={"task_id": task_id, "status": "pending"}
+    )
+    models.db.session.add(result)
+    models.db.session.commit()
+    
+    run_audit_task.delay(
+        task_id=task_id,
+        ip=ip,
+        port=port,
+        username=username,
+        proxy_list=proxy_list,
+        use_vuln_check=use_vuln_check
+    )
+    
+    return jsonify({"task_id": task_id, "status": "started"}), 202
+
+
+@bp.get("/audit/result/<task_id>")
+def get_audit_result(task_id):
+    """Возвращает результат аудита по ID задачи."""
+    result = models.CameraAuditResult.query.filter(
+        models.CameraAuditResult.details['task_id'].astext == task_id
+    ).first()
+    if not result:
+        return jsonify({"error": "Task not found"}), 404
+    
+    return jsonify({
+        "ip": result.target_ip,
+        "success": result.success,
+        "password": result.password_found,
+        "method": result.method,
+        "details": result.details
+    })
+# ===== КОНЕЦ НОВЫХ ЭНДПОИНТОВ =====
