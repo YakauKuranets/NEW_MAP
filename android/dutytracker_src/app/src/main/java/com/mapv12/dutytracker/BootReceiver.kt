@@ -16,9 +16,9 @@ class BootReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         // Если трекинг был включён — поднимаем Foreground service.
-        if (ForegroundLocationService.isTrackingOn(context)) {
-            val i = Intent(context, ForegroundLocationService::class.java).apply {
-                this.action = ForegroundLocationService.ACTION_START
+        if (LocationService.isTrackingOn(context)) {
+            val i = Intent(context, LocationService::class.java).apply {
+                this.action = LocationService.ACTION_START
             }
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {

@@ -1,0 +1,63 @@
+{
+  "version": 8,
+  "name": "Cyberpunk Offline Belarus",
+  "sources": {
+    "belarus_offline": {
+      "type": "vector",
+      "url": "pmtiles:///belarus.pmtiles"
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#050505"
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "belarus_offline",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#0a1128",
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "roads",
+      "type": "line",
+      "source": "belarus_offline",
+      "source-layer": "transportation",
+      "paint": {
+        "line-color": "#1A56DB",
+        "line-opacity": 0.5,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          0.5,
+          10,
+          1.2,
+          14,
+          2.6,
+          18,
+          5
+        ]
+      }
+    },
+    {
+      "id": "buildings",
+      "type": "fill",
+      "source": "belarus_offline",
+      "source-layer": "building",
+      "paint": {
+        "fill-color": "#111111",
+        "fill-outline-color": "#333333",
+        "fill-opacity": 0.95
+      }
+    }
+  ]
+}

@@ -14,13 +14,17 @@ from datetime import datetime
 import json
 from typing import Any, Dict, List, Optional
 
-from flask import request, jsonify, abort, session, current_app
+from pydantic import ValidationError
+
+from flask import request, jsonify, abort, session, current_app, Response
 
 from ..helpers import require_admin
 from ..extensions import db
 from ..realtime.hub import broadcast_sync
+from ..realtime.broker import get_broker
 from ..security.rate_limit import check_rate_limit
 from ..models import Incident, IncidentEvent, IncidentAssignment, DutyShift, TrackerDevice, Object
+from ..schemas import IncidentCreateSchema, IncidentChatSendSchema
 
 from . import bp
 
@@ -174,8 +178,68 @@ def _get_current_user() -> tuple[str, str]:
     abort(403)
 
 
+
+
+@bp.post("/<int:incident_id>/chat/send")
+def api_incident_chat_send(incident_id: int) -> tuple[Response, int] | Response:
+    """Send incident chat message via HTTP -> DB -> Redis Pub/Sub pipeline."""
+    require_admin("viewer")
+
+    incident: Incident | None = Incident.query.get(incident_id)
+    if incident is None:
+        return jsonify({"error": "incident_not_found"}), 404
+
+    payload: Dict[str, Any] = request.get_json(silent=True, force=True) or {}
+    try:
+        contract: IncidentChatSendSchema = IncidentChatSendSchema.model_validate(payload)
+    except ValidationError as exc:
+        return jsonify({"error": "validation_failed", "details": exc.errors()}), 400
+
+    sender_type, fallback_sender_id = _get_current_user()
+    role: str = "dispatcher" if sender_type == "admin" else "agent"
+    author_id: str = contract.author_id or fallback_sender_id
+    author_name: str = str(session.get("admin_username") or session.get("username") or author_id)
+    text: str = contract.text
+
+    chat_payload: Dict[str, Any] = {
+        "author_id": author_id,
+        "author": author_name,
+        "role": role,
+        "text": text,
+    }
+
+    chat_event = IncidentEvent(
+        incident_id=incident_id,
+        event_type="chat_message",
+        payload=chat_payload,
+        ts=datetime.utcnow(),
+    )
+    db.session.add(chat_event)
+    db.session.commit()
+
+    timestamp_iso: str = chat_event.ts.isoformat() if chat_event.ts else datetime.utcnow().isoformat()
+    message_envelope: Dict[str, Any] = {
+        "id": chat_event.id,
+        "author": author_name,
+        "role": role,
+        "text": text,
+        "timestamp": timestamp_iso,
+    }
+
+    broker_payload: Dict[str, Any] = {
+        "event": "CHAT_MESSAGE",
+        "incident_id": incident_id,
+        "message": message_envelope,
+    }
+
+    if not get_broker().publish_event("map_updates", broker_payload):
+        current_app.logger.warning("incident chat publish failed", extra={"incident_id": incident_id, "message_id": chat_event.id})
+
+    return jsonify({"status": "delivered"}), 201
+
+
 @bp.post("")
-def api_incidents_create():
+def api_incidents_create() -> tuple[Response, int] | Response:
     """Создать новый инцидент.
 
     Доступно только администраторам. Клиент отправляет JSON с
@@ -196,12 +260,29 @@ def api_incidents_create():
     if rl is not None:
         return rl
     payload: Dict[str, Any] = request.get_json(silent=True, force=True) or {}
+
+    # Pydantic validation (FastAPI-style): validates key contract fields.
+    candidate_location = (payload.get("location") or payload.get("address") or "").strip()
+    if not candidate_location and payload.get("lat") is not None and payload.get("lon") is not None:
+        candidate_location = f"{payload.get('lat')},{payload.get('lon')}"
+    candidate_title = (payload.get("title") or payload.get("address") or "Incident").strip()
+    candidate_description = (payload.get("description") or "No description").strip()
+    try:
+        contract = IncidentCreateSchema.model_validate({
+            "title": candidate_title,
+            "description": candidate_description,
+            "level": payload.get("level", payload.get("priority", 3)),
+            "location": candidate_location or "Unknown",
+        })
+    except ValidationError as e:
+        return jsonify({"error": "Validation failed", "details": e.errors()}), 400
+
     object_id = payload.get("object_id")
     lat = payload.get("lat")
     lon = payload.get("lon")
-    address = (payload.get("address") or "").strip() or None
-    description = (payload.get("description") or "").strip() or None
-    priority = payload.get("priority")
+    address = (payload.get("address") or contract.location).strip() or None
+    description = contract.description
+    priority = contract.level
 
     # Нормализуем приоритет (по умолчанию 3)
     try:

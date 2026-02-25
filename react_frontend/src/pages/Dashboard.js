@@ -4,15 +4,24 @@ import CommandCenterMap from '../components/CommandCenterMap';
 import IncidentFeed from '../components/IncidentFeed';
 import VideoModal from '../components/VideoModal';
 import ObjectInspector from '../components/ObjectInspector';
+import IncidentChat from '../components/IncidentChat';
+import IncidentChatPanel from '../components/IncidentChatPanel';
+import PendingRequestsPanel from '../components/PendingRequestsPanel';
+import SmartFilterPanel from '../components/SmartFilterPanel';
 import useMapStore from '../store/useMapStore';
 
 export default function Dashboard() {
   const [activeObjectId, setActiveObjectId] = useState(null);
   const [activeTab, setActiveTab] = useState('radar');
-
-  // === ВОТ ОНО! ГЛОБАЛЬНОЕ СОСТОЯНИЕ ТЕМЫ ===
-  // По умолчанию ставим 'dark' (Киберпанк), чтобы стартовало черным
   const [theme, setTheme] = useState('dark');
+  const [flyToTarget, setFlyToTarget] = useState(null);
+  const [activeChatIncidentId, setActiveChatIncidentId] = useState(null);
+  const [filters, setFilters] = useState({
+    showAgents: true,
+    showCameras: true,
+    showIncidents: true,
+    showPending: true,
+  });
 
   const trackers = useMapStore((s) => s.trackers);
 
@@ -21,7 +30,6 @@ export default function Dashboard() {
     return { id: activeObjectId, ...trackers[activeObjectId] };
   }, [activeObjectId, trackers]);
 
-  // Меняем фон самого экрана под картой
   const bgClass = theme === 'dark' ? 'bg-slate-950' : 'bg-slate-100';
 
   const renderContent = () => {
@@ -31,12 +39,17 @@ export default function Dashboard() {
           <>
             <div className="absolute inset-0">
               <CommandCenterMap
-                theme={theme} // Передаем текущую тему в карту
-                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} // Кнопка переключает тему!
+                theme={theme}
+                flyToTarget={flyToTarget}
+                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 onUserClick={(id) => setActiveObjectId(id)}
+                filters={filters}
               />
             </div>
             <IncidentFeed theme={theme} />
+            <IncidentChat />
+            <PendingRequestsPanel onFlyToPending={setFlyToTarget} />
+            <SmartFilterPanel filters={filters} onFiltersChange={setFilters} />
           </>
         );
       case 'agents':
@@ -49,29 +62,32 @@ export default function Dashboard() {
   };
 
   return (
-    // Передаем тему в левое меню, чтобы оно тоже меняло цвет
     <DashboardLayout activeTab={activeTab} onTabChange={setActiveTab} theme={theme}>
-      <div className={`relative w-full h-full transition-colors duration-500 ${bgClass}`}>
-
+      <div className={`relative h-full w-full transition-colors duration-500 ${bgClass}`}>
         {renderContent()}
 
-        {/* ПЕРЕДАЕМ ТЕМУ В КАРТОЧКУ И ВИДЕО */}
+
+        {activeChatIncidentId !== null && (
+          <IncidentChatPanel
+            incidentId={activeChatIncidentId}
+            onClose={() => setActiveChatIncidentId(null)}
+          />
+        )}
+
         <ObjectInspector data={selectedObjectData} onClose={() => setActiveObjectId(null)} theme={theme} />
         <VideoModal userId={activeObjectId} onClose={() => setActiveObjectId(null)} theme={theme} />
 
-        {/* Декоративный прицел (HUD) */}
         {activeTab === 'radar' && (
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-20 z-10">
-            <div className={`w-32 h-32 border rounded-full flex items-center justify-center transition-colors ${theme === 'dark' ? 'border-slate-500' : 'border-slate-400'}`}>
-              <div className={`w-1 h-4 absolute top-0 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`}></div>
-              <div className={`w-1 h-4 absolute bottom-0 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`}></div>
-              <div className={`w-4 h-1 absolute left-0 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`}></div>
-              <div className={`w-4 h-1 absolute right-0 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`}></div>
-              <div className="w-1 h-1 bg-red-500 rounded-full"></div>
+          <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 transform opacity-20">
+            <div className={`flex h-32 w-32 items-center justify-center rounded-full border transition-colors ${theme === 'dark' ? 'border-slate-500' : 'border-slate-400'}`}>
+              <div className={`absolute top-0 h-4 w-1 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`} />
+              <div className={`absolute bottom-0 h-4 w-1 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`} />
+              <div className={`absolute left-0 h-1 w-4 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`} />
+              <div className={`absolute right-0 h-1 w-4 ${theme === 'dark' ? 'bg-slate-500' : 'bg-slate-400'}`} />
+              <div className="h-1 w-1 rounded-full bg-red-500" />
             </div>
           </div>
         )}
-
       </div>
     </DashboardLayout>
   );

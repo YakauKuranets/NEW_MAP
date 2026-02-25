@@ -2,10 +2,70 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
   margin: 0;
   width: 100%;
   height: 100%;
+  background: #000;
+  color: #d4eeff;
+}
+
+body {
+  font-family: Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2e3b4a #0b0f14;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, #05070b, #0d1219);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #2a3342, #141a24);
+  border: 1px solid #3f4f66;
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #3a4556, #1b2230);
+}
+
+
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.75) rgba(2, 10, 18, 0.9);
+}
+
+.chat-scroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.chat-scroll::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(1, 8, 16, 0.9), rgba(2, 13, 24, 0.9));
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.7), rgba(56, 189, 248, 0.55));
+  border: 1px solid rgba(103, 232, 249, 0.45);
+  border-radius: 9999px;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.35);
+}
+
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.9), rgba(56, 189, 248, 0.75));
 }

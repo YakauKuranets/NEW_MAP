@@ -23,7 +23,8 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple, List
 
-from flask import request, jsonify, current_app, g, abort
+from pydantic import ValidationError
+from flask import request, jsonify, current_app, g, abort, Response
 
 from . import bp
 from ..extensions import db
@@ -35,6 +36,7 @@ from ..audit.logger import log_admin_action
 from ..integrations.telegram_sender import send_dutytracker_connect_button
 from ..sockets import broadcast_event_sync
 from .alerting import tracker_alerts_tick
+from ..schemas import TelemetryCreateSchema
 from ..models import (
     TrackerPairCode,
     TrackerBootstrapToken,
@@ -3092,7 +3094,7 @@ def _create_app_session(dev: TrackerDevice, shift_id: int) -> TrackingSession:
 
 
 @bp.post("/api/tracker/start")
-def api_start():
+def api_start() -> tuple[Response, int] | Response:
     dev, err = _require_device()
     if err:
         return err
@@ -3103,6 +3105,22 @@ def api_start():
         lon = float(lon) if lon is not None else None
     except Exception:
         lat = lon = None
+
+    # Pydantic validation for telemetry-like payload (optional when coordinates are provided)
+    if lat is not None or lon is not None:
+        try:
+            telemetry = TelemetryCreateSchema.model_validate({
+                'lon': lon,
+                'lat': lat,
+                'alt': data.get('alt'),
+                'battery': data.get('battery') if data.get('battery') is not None else data.get('battery_pct'),
+                'status': (data.get('status') or 'start'),
+                'user_id': dev.user_id,
+            })
+            lat = telemetry.lat
+            lon = telemetry.lon
+        except ValidationError as e:
+            return jsonify({"error": "Validation failed", "details": e.errors()}), 400
 
     sh = _get_or_create_active_shift_for_device(dev, lat=lat, lon=lon)
     sess = _create_app_session(dev, shift_id=sh.id)

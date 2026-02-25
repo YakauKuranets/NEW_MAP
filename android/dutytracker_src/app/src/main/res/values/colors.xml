@@ -20,16 +20,16 @@
     <color name="md_on_tertiary_container">#001F28</color>
 
     <!-- Error / SOS -->
-    <color name="md_error">#BA1A1A</color>
+    <color name="md_error">#FF003C</color>
     <color name="md_on_error">#FFFFFF</color>
     <color name="md_error_container">#FFDAD6</color>
     <color name="md_on_error_container">#410002</color>
-    <color name="sos_red">#D32F2F</color>
+    <color name="sos_red">#FF003C</color>
 
     <!-- Background / Surface — light -->
-    <color name="md_background">#F8F9FF</color>
+    <color name="md_background">#000000</color>
     <color name="md_on_background">#191C25</color>
-    <color name="md_surface">#F8F9FF</color>
+    <color name="md_surface">#000000</color>
     <color name="md_on_surface">#191C25</color>
     <color name="md_surface_variant">#E1E2F0</color>
     <color name="md_on_surface_variant">#44475A</color>
@@ -48,6 +48,9 @@
     <color name="tile_acc_bg">#E8F5E9</color>
     <color name="tile_last_bg">#F3E5F5</color>
     <color name="tile_battery_bg">#E8F5E9</color>
+
+    <color name="glass_card_bg">#CC10161F</color>
+    <color name="glass_card_stroke">#801A56DB</color>
 
     <!-- Night mode overrides in res/values-night/colors.xml -->
 </resources>

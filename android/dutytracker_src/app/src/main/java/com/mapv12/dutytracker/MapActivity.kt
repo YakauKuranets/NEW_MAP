@@ -3,14 +3,13 @@ package com.mapv12.dutytracker
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import com.mapv12.dutytracker.ui.theme.DutyTrackerTheme
 
 class MapActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            DutyTrackerTheme {
                 MapScreen()
             }
         }

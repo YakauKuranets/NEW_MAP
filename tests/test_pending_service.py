@@ -27,8 +27,19 @@ def test_pending_count_and_list(db_session):
     assert ids == {p1.id, p2.id}
 
 
-def test_approve_pending_creates_address_and_history(db_session):
+def test_approve_pending_creates_address_and_history(db_session, monkeypatch):
     p = _create_pending("To approve", 10.0, 20.0)
+
+    published = []
+
+    class BrokerStub:
+        def publish_event(self, channel, payload):
+            published.append((channel, payload))
+            return True
+
+    import app.services.pending_service as pending_service
+    monkeypatch.setattr(pending_service, "get_broker", lambda: BrokerStub())
+
     result = approve_pending(p.id)
     assert result["status"] == "ok"
     addr_id = result["id"]
@@ -41,12 +52,34 @@ def test_approve_pending_creates_address_and_history(db_session):
     hist = PendingHistory.query.filter_by(status="approved").first()
     assert hist is not None
 
+    assert published == [
+        (
+            "map_updates",
+            {
+                "event": "MARKER_APPROVED",
+                "marker_id": p.id,
+                "new_object": addr.to_dict(),
+            },
+        ),
+    ]
+
     # Заявка должна быть удалена
     assert PendingMarker.query.get(p.id) is None
 
 
-def test_reject_pending_creates_history_and_removes(db_session):
+def test_reject_pending_creates_history_and_removes(db_session, monkeypatch):
     p = _create_pending("To reject")
+
+    published = []
+
+    class BrokerStub:
+        def publish_event(self, channel, payload):
+            published.append((channel, payload))
+            return True
+
+    import app.services.pending_service as pending_service
+    monkeypatch.setattr(pending_service, "get_broker", lambda: BrokerStub())
+
     result = reject_pending(p.id)
     assert result["status"] == "ok"
     assert result["remaining"] == 0
@@ -54,6 +87,15 @@ def test_reject_pending_creates_history_and_removes(db_session):
     hist = PendingHistory.query.filter_by(status="rejected").first()
     assert hist is not None
     assert PendingMarker.query.get(p.id) is None
+    assert published == [
+        (
+            "map_updates",
+            {
+                "event": "MARKER_REJECTED",
+                "marker_id": p.id,
+            },
+        ),
+    ]
 
 
 def test_clear_all_pending_marks_cancelled(db_session):

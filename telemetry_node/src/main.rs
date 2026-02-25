@@ -1,10 +1,16 @@
-use axum::{routing::post, Json, Router, extract::State};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
+use deadpool_redis::{redis::AsyncCommands, Config as RedisPoolConfig, Pool, Runtime};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-// Удален неиспользуемый Mutex
-use redis::AsyncCommands;
+use std::{sync::Arc, time::Duration};
+use thiserror::Error;
+use tracing::{error, info, warn};
 
-// Структура, которую присылает Android-приложение
 #[derive(Deserialize, Serialize, Debug)]
 struct TelemetryPayload {
     user_id: String,
@@ -14,59 +20,157 @@ struct TelemetryPayload {
     unit_label: Option<String>,
 }
 
-// Структура для отправки в нашу WebSocket-шину (чтобы React-карта поняла)
 #[derive(Serialize)]
 struct WsMessage {
     event: String,
     data: TelemetryPayload,
 }
 
-// Состояние приложения (держит пул подключений к Redis)
+#[derive(Clone)]
 struct AppState {
-    redis_client: redis::Client,
+    redis_pool: Pool,
+    node_token: Option<String>,
 }
 
-// Сверхбыстрый эндпоинт приема координат
+#[derive(Debug, Error)]
+enum NodeError {
+    #[error("Redis error: {0}")]
+    RedisError(String),
+    #[error("Unauthorized")]
+    Unauthorized,
+    #[error("Invalid payload: {0}")]
+    InvalidPayload(String),
+    #[error("Internal server error: {0}")]
+    Internal(String),
+}
+
+impl IntoResponse for NodeError {
+    fn into_response(self) -> Response {
+        let (status, code, message) = match self {
+            Self::RedisError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "redis_error", msg),
+            Self::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Unauthorized".to_string(),
+            ),
+            Self::InvalidPayload(msg) => (StatusCode::BAD_REQUEST, "invalid_payload", msg),
+            Self::Internal(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                msg,
+            ),
+        };
+
+        let body = Json(serde_json::json!({
+            "error": code,
+            "message": message,
+        }));
+
+        (status, body).into_response()
+    }
+}
+
+fn authorize(headers: &HeaderMap, expected_token: Option<&str>) -> Result<(), NodeError> {
+    let Some(expected) = expected_token else {
+        return Ok(());
+    };
+
+    let provided = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .or_else(|| {
+            headers
+                .get("x-node-token")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+        });
+
+    match provided {
+        Some(token) if token == expected => Ok(()),
+        _ => Err(NodeError::Unauthorized),
+    }
+}
+
 async fn handle_telemetry(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<TelemetryPayload>,
-) -> &'static str {
-    
-    // 1. Упаковываем в нужный формат для фронтенда
-    let ws_msg = WsMessage {
-        event: "duty_location_update".to_string(), // Это событие ждет карта
-        data: payload,
-    };
-    
-    // 2. Мгновенный проброс в шину Redis (Pub/Sub)
-    if let Ok(mut con) = state.redis_client.get_async_connection().await {
-        if let Ok(msg_str) = serde_json::to_string(&ws_msg) {
-            // Публикуем в канал 'map_updates', который слушает твой Python app/sockets.py
-            let _: Result<(), _> = con.publish("map_updates", msg_str).await;
-        }
+) -> Result<impl IntoResponse, NodeError> {
+    authorize(&headers, state.node_token.as_deref())?;
+
+    if !payload.lat.is_finite() || !payload.lon.is_finite() {
+        return Err(NodeError::InvalidPayload(
+            "Coordinates must be finite numbers".to_string(),
+        ));
+    }
+    if !(-90.0..=90.0).contains(&payload.lat) || !(-180.0..=180.0).contains(&payload.lon) {
+        return Err(NodeError::InvalidPayload(
+            "lat/lon out of range".to_string(),
+        ));
     }
 
-    // 3. Возвращаем 200 OK за доли миллисекунды, чтобы телефон не ждал
-    "OK" 
+    let ws_msg = WsMessage {
+        event: "duty_location_update".to_string(),
+        data: payload,
+    };
+
+    let msg_str = serde_json::to_string(&ws_msg)
+        .map_err(|e| NodeError::InvalidPayload(format!("serialization failed: {e}")))?;
+
+    let mut con = state
+        .redis_pool
+        .get()
+        .await
+        .map_err(|e| NodeError::RedisError(format!("pool get failed: {e}")))?;
+
+    let publish_result: Result<usize, _> = con.publish("map_updates", msg_str).await;
+    publish_result.map_err(|e| NodeError::RedisError(format!("publish failed: {e}")))?;
+
+    Ok((StatusCode::OK, "OK"))
 }
 
 #[tokio::main]
-async fn main() {
-    // Подключаемся к Redis (в продакшене брать из ENV)
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-    
-    // Инициализируем клиента
-    let client = redis::Client::open(redis_url).expect("❌ Не удалось подключиться к Redis");
-    
-    let state = Arc::new(AppState { redis_client: client });
+async fn main() -> Result<(), NodeError> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,telemetry_node=debug".to_string()),
+        )
+        .init();
 
-    // Настраиваем роутер Axum
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
+    let node_token = std::env::var("NODE_TOKEN").ok().filter(|v| !v.trim().is_empty());
+
+    let mut cfg = RedisPoolConfig::from_url(redis_url);
+    cfg.pool = Some(deadpool_redis::PoolConfig::new(32));
+    cfg.timeouts.wait = Some(Duration::from_secs(2));
+
+    let pool = cfg
+        .create_pool(Some(Runtime::Tokio1))
+        .map_err(|e| NodeError::Internal(format!("redis pool init failed: {e}")))?;
+
+    let state = Arc::new(AppState {
+        redis_pool: pool,
+        node_token,
+    });
+
     let app = Router::new()
         .route("/api/duty/telemetry/fast", post(handle_telemetry))
         .with_state(state);
 
-    // Запускаем сервер на порту 3000
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("🚀 Rust Telemetry Node запущена на порту 3000!");
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .map_err(|e| NodeError::Internal(format!("bind failed: {e}")))?;
+
+    info!("Rust Telemetry Node started on 0.0.0.0:3000");
+
+    let serve_result = axum::serve(listener, app).await;
+    if let Err(e) = serve_result {
+        error!(error = %e, "server error");
+        return Err(NodeError::Internal(format!("server error: {e}")));
+    }
+
+    warn!("server stopped gracefully");
+    Ok(())
 }

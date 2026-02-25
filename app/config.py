@@ -270,6 +270,11 @@ class Config:
     RATE_LIMIT_DUTY_SOS_PER_MINUTE = int(os.environ.get("RATE_LIMIT_DUTY_SOS_PER_MINUTE", "30"))
     RATE_LIMIT_DUTY_BREAK_PER_MINUTE = int(os.environ.get("RATE_LIMIT_DUTY_BREAK_PER_MINUTE", "60"))
     RATE_LIMIT_DUTY_SETUNIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_DUTY_SETUNIT_PER_MINUTE", "60"))
+
+    # --- Celery (background workers) ---
+    _default_redis = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+    CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", _default_redis)
+    CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", _default_redis)
     # --- Schedulers (background worker) ---
     # Важно: в проде планировщики должны работать в отдельном worker-контейнере.
     ENABLE_INTERNAL_SCHEDULERS = os.environ.get("ENABLE_INTERNAL_SCHEDULERS", "0") == "1"

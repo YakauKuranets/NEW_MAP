@@ -17,19 +17,29 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.work.*
 import com.google.android.gms.location.*
 import com.google.gson.Gson
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-class ForegroundLocationService : Service() {
+open class ForegroundLocationService : Service() {
 
     companion object {
         const val ACTION_START = "com.mapv12.dutytracker.ACTION_START"
@@ -37,7 +47,7 @@ class ForegroundLocationService : Service() {
         const val ACTION_UPDATE_MODE = "com.mapv12.dutytracker.ACTION_UPDATE_MODE"
 
         private const val NOTIF_ID = 2001
-        private const val CH_ID = "dutytracker_location"
+        private const val CH_ID = "TrackerChannel"
 
         const val PREF_FLAGS = "dutytracker_flags"
         const val KEY_TRACKING_ON = "tracking_on"
@@ -47,20 +57,6 @@ class ForegroundLocationService : Service() {
 
         fun setTrackingOn(ctx: Context, on: Boolean) {
             ctx.getSharedPreferences(PREF_FLAGS, Context.MODE_PRIVATE).edit().putBoolean(KEY_TRACKING_ON, on).apply()
-        }
-
-        fun enqueueUpload(ctx: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
-            val req = OneTimeWorkRequestBuilder<UploadWorker>()
-                .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.SECONDS)
-                .build()
-
-            WorkManager.getInstance(ctx)
-                .enqueueUniqueWork("upload_now", ExistingWorkPolicy.KEEP, req)
         }
 
         fun requestModeUpdate(ctx: Context) {
@@ -73,9 +69,50 @@ class ForegroundLocationService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var healthJob: Job? = null
+    private var wsReconnectJob: Job? = null
 
     private lateinit var fused: FusedLocationProviderClient
     private val qualityFilter = TrackingQualityFilter()
+    private val gson = Gson()
+    private val wsMutex = Mutex()
+    private val pendingAckBatches = ConcurrentHashMap<String, List<Long>>()
+
+    @Volatile
+    private var webSocket: WebSocket? = null
+    @Volatile
+    private var webSocketConnected: Boolean = false
+
+    private val wsClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .retryOnConnectionFailure(true)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
+    private val wsListener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            this@ForegroundLocationService.webSocket = webSocket
+            webSocketConnected = true
+            StatusStore.setLastError(applicationContext, null)
+            scope.launch { flushQueuedPoints() }
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            scope.launch { handleWsAck(text) }
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            webSocketConnected = false
+            scheduleReconnect()
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            webSocketConnected = false
+            StatusStore.setLastError(applicationContext, "ws: ${t.message}")
+            scheduleReconnect()
+        }
+    }
 
     // --- MESH NETWORK ---
     private var meshManager: MeshNetworkManager? = null
@@ -148,14 +185,15 @@ class ForegroundLocationService : Service() {
             )
 
             scope.launch {
+                var insertedId: Long? = null
                 try {
-                    App.db.trackPointDao().insert(point)
+                    insertedId = App.db.trackPointDao().insert(point)
 
                     // --- MESH NETWORK LOGIC ---
                     // Если нет интернета - отправляем точку в Mesh-сеть соседям
                     if (!isNetworkAvailable()) {
                         try {
-                            val json = Gson().toJson(point)
+                            val json = gson.toJson(point)
                             meshManager?.sendDataToNetwork(json)
                         } catch (e: Exception) {
                             Log.e("DutyTracker", "Mesh send error", e)
@@ -176,10 +214,9 @@ class ForegroundLocationService : Service() {
                 } catch (e: Exception) {
                     StatusStore.setLastError(applicationContext, e.message)
                 }
-            }
 
-            // Trigger upload (throttled by ExistingWorkPolicy.KEEP)
-            enqueueUpload(applicationContext)
+                insertedId?.let { sendLatestQueuedPoint(point.copy(id = it)) }
+            }
         }
     }
 
@@ -336,14 +373,13 @@ class ForegroundLocationService : Service() {
 
         setTrackingOn(applicationContext, true)
         startHealthLoop()
+        startWsTunnelLoop()
 
         // --- MESH NETWORK INIT ---
         if (meshManager == null) {
-            val sessionId = SessionStore.getSessionId(applicationContext) ?: "unknown_user_${System.currentTimeMillis()}"
-            meshManager = MeshNetworkManager(applicationContext, sessionId)
+            meshManager = MeshNetworkManager(applicationContext)
         }
-        meshManager?.startAdvertising()
-        meshManager?.startDiscovery()
+        meshManager?.startMesh()
         // -------------------------
 
         val req = buildRequest()
@@ -358,6 +394,7 @@ class ForegroundLocationService : Service() {
 
     private fun stopTracking() {
         stopHealthLoop(sendFinal = true)
+        stopWsTunnelLoop()
 
         // --- MESH NETWORK STOP ---
         meshManager?.stopAll()
@@ -365,7 +402,6 @@ class ForegroundLocationService : Service() {
         // -------------------------
 
         try { StatusStore.setLastHealth(applicationContext, "") } catch (_: Exception) {}
-        try { enqueueUpload(applicationContext) } catch (_: Exception) {}
         setTrackingOn(applicationContext, false)
         try { fused.removeLocationUpdates(callback) } catch (_: Exception) {}
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -388,7 +424,7 @@ class ForegroundLocationService : Service() {
     private fun createChannelIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            val ch = NotificationChannel(CH_ID, "DutyTracker", NotificationManager.IMPORTANCE_LOW)
+            val ch = NotificationChannel(CH_ID, "TrackerChannel", NotificationManager.IMPORTANCE_LOW)
             nm.createNotificationChannel(ch)
         }
     }
@@ -399,8 +435,8 @@ class ForegroundLocationService : Service() {
         val queue = StatusStore.getQueue(applicationContext)
 
         return NotificationCompat.Builder(this, CH_ID)
-            .setContentTitle("DutyTracker")
-            .setContentText("Трекинг: $label · очередь: $queue")
+            .setContentTitle("DutyTracker Radar")
+            .setContentText("Локация отслеживается · режим: $label · очередь: $queue")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .build()
@@ -414,4 +450,144 @@ class ForegroundLocationService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun startWsTunnelLoop() {
+        if (wsReconnectJob != null) return
+        wsReconnectJob = scope.launch {
+            var attempt = 0
+            while (isTrackingOn(applicationContext)) {
+                if (!isNetworkAvailable()) {
+                    delay(1_500)
+                    continue
+                }
+
+                if (webSocketConnected && webSocket != null) {
+                    delay(1_000)
+                    continue
+                }
+
+                openWebSocket()
+                val backoffMs = exponentialBackoffMs(attempt)
+                attempt = (attempt + 1).coerceAtMost(8)
+                delay(backoffMs)
+
+                if (webSocketConnected) {
+                    attempt = 0
+                }
+            }
+        }
+    }
+
+    private fun stopWsTunnelLoop() {
+        try { wsReconnectJob?.cancel() } catch (_: Exception) {}
+        wsReconnectJob = null
+        webSocketConnected = false
+        try { webSocket?.close(1000, "service_stopped") } catch (_: Exception) {}
+        webSocket = null
+    }
+
+    private fun scheduleReconnect() {
+        if (!isTrackingOn(applicationContext)) return
+        if (wsReconnectJob == null || wsReconnectJob?.isCancelled == true) {
+            startWsTunnelLoop()
+        }
+    }
+
+    private fun openWebSocket() {
+        val token = SecureStores.getDeviceToken(applicationContext)
+        val base = Config.getBaseUrl(applicationContext).trim().trimEnd('/')
+        val wsBase = base.replaceFirst("http://", "ws://").replaceFirst("https://", "wss://")
+        val reqBuilder = Request.Builder().url("$wsBase/api/duty/telemetry/ws")
+        if (!token.isNullOrBlank()) {
+            reqBuilder.header("X-DEVICE-TOKEN", token)
+        }
+        val req = reqBuilder.build()
+        webSocket = wsClient.newWebSocket(req, wsListener)
+    }
+
+    private suspend fun sendLatestQueuedPoint(point: TrackPointEntity) {
+        wsMutex.withLock {
+            if (!webSocketConnected || webSocket == null || point.id <= 0) return
+            val batchId = UUID.randomUUID().toString()
+            val payload = JSONObject()
+                .put("type", "telemetry_batch")
+                .put("batch_id", batchId)
+                .put("points", JSONArray().put(JSONObject(pointToJson(point))))
+            val sent = try { webSocket?.send(payload.toString()) ?: false } catch (_: Exception) { false }
+            if (sent) {
+                pendingAckBatches[batchId] = listOf(point.id)
+            }
+        }
+    }
+
+    private suspend fun flushQueuedPoints() {
+        wsMutex.withLock {
+            if (!webSocketConnected || webSocket == null) return
+            val dao = App.db.trackPointDao()
+            while (webSocketConnected) {
+                val batch = dao.loadUnsynced(limit = 100)
+                if (batch.isEmpty()) break
+
+                val batchId = UUID.randomUUID().toString()
+                val payload = JSONObject()
+                    .put("type", "telemetry_batch")
+                    .put("batch_id", batchId)
+                    .put("points", JSONArray().apply {
+                        batch.forEach { put(JSONObject(pointToJson(it))) }
+                    })
+
+                val sent = try { webSocket?.send(payload.toString()) ?: false } catch (_: Exception) { false }
+                if (!sent) break
+                pendingAckBatches[batchId] = batch.map { it.id }
+            }
+
+            try {
+                StatusStore.setQueue(applicationContext, dao.countUnsynced())
+            } catch (_: Exception) {}
+        }
+    }
+
+    private suspend fun handleWsAck(text: String) {
+        val ackBatchId = try {
+            val json = JSONObject(text)
+            when {
+                json.optString("event") == "telemetry_ack" -> json.optString("batch_id")
+                json.optBoolean("ack", false) -> json.optString("batch_id")
+                else -> ""
+            }
+        } catch (_: Exception) {
+            ""
+        }
+        if (ackBatchId.isBlank()) return
+
+        val ids = pendingAckBatches.remove(ackBatchId).orEmpty()
+        if (ids.isEmpty()) return
+
+        try {
+            App.db.trackPointDao().markSynced(ids)
+            StatusStore.setLastUpload(applicationContext, Instant.now().toString())
+            StatusStore.setQueue(applicationContext, App.db.trackPointDao().countUnsynced())
+        } catch (_: Exception) {}
+    }
+
+    private fun pointToJson(point: TrackPointEntity): String {
+        val payload = JSONObject()
+            .put("session_id", point.sessionId ?: SessionStore.getSessionId(applicationContext))
+            .put("user_id", DeviceInfoStore.deviceId(applicationContext))
+            .put("ts_epoch_ms", point.tsEpochMs)
+            .put("lat", point.lat)
+            .put("lon", point.lon)
+        point.accuracyM?.let { payload.put("accuracy_m", it) }
+        point.speedMps?.let { payload.put("speed_mps", it) }
+        point.bearingDeg?.let { payload.put("bearing_deg", it) }
+        return payload.toString()
+    }
+
+    private fun exponentialBackoffMs(attempt: Int): Long {
+        val base = 1_000L
+        val max = 30_000L
+        val exp = 1L shl attempt.coerceIn(0, 10)
+        val jitter = (0..750).random().toLong()
+        return (base * exp + jitter).coerceAtMost(max)
+    }
 }

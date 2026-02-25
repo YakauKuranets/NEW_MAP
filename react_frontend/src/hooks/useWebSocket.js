@@ -1,13 +1,27 @@
 import { useEffect } from 'react';
 import useMapStore from '../store/useMapStore';
+import useChatStore from '../store/useChatStore';
 
+const asArray = (value) => (Array.isArray(value) ? value : [value]);
+
+const getPendingId = (payload) => payload?.pending_id ?? payload?.marker_id ?? payload?.id;
+
+/**
+ * Realtime subscription hook for map, pending moderation and incident chat streams.
+ * @param {{url?: string, wsFactory?: (url: string) => WebSocket}} [options]
+ * @returns {void}
+ */
 export default function useWebSocket({
   url = process.env.REACT_APP_REALTIME_WS_URL || 'ws://localhost:8765',
   wsFactory,
 } = {}) {
+  const updateAgent = useMapStore((s) => s.updateAgent);
   const addIncident = useMapStore((s) => s.addIncident);
-  const upsertTrackerPosition = useMapStore((s) => s.upsertTrackerPosition);
-  const setTrackerStatus = useMapStore((s) => s.setTrackerStatus);
+  const addChatMessage = useMapStore((s) => s.addChatMessage);
+  const upsertPendingMarker = useMapStore((s) => s.upsertPendingMarker);
+  const removePendingMarker = useMapStore((s) => s.removePendingMarker);
+
+  const addIncidentChatMessage = useChatStore((s) => s.addMessage);
 
   useEffect(() => {
     const socket = wsFactory ? wsFactory(url) : new WebSocket(url);
@@ -15,35 +29,64 @@ export default function useWebSocket({
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data || '{}');
-        const { event: eventName, data } = message;
-        if (eventName === 'pending_created' && data) {
-          addIncident({
-            id: data.id,
-            lat: data.lat,
-            lon: data.lon,
-            category: data.category,
-            status: 'pending',
-          });
+        const eventName = message?.event;
+        const data = message?.data;
+
+        if (!eventName) return;
+
+        if (eventName === 'telemetry_update' || eventName === 'duty_location_update') {
+          updateAgent(data);
+          return;
         }
-        if (eventName === 'duty_location_update' && data) {
-          const trackerId = String(data.device_id || data.user_id || data.id || 'unknown');
-          upsertTrackerPosition(trackerId, {
-            lat: data.lat,
-            lon: data.lon,
-            heading: data.heading,
-            speed: data.speed,
-          });
-          setTrackerStatus(trackerId, data.status || 'online');
+
+        if (eventName === 'pending_created' || eventName === 'NEW_PENDING_MARKER') {
+          const pendingPayload = data ?? message?.marker ?? message;
+          asArray(pendingPayload).forEach((item) => upsertPendingMarker(item));
+          return;
         }
-      } catch (error) {
-        // noop on malformed messages
+
+        if (
+          eventName === 'pending_approved'
+          || eventName === 'pending_rejected'
+          || eventName === 'MARKER_APPROVED'
+          || eventName === 'MARKER_REJECTED'
+        ) {
+          const pendingId = getPendingId(data) ?? getPendingId(message);
+          if (pendingId !== undefined && pendingId !== null) removePendingMarker(pendingId);
+
+          if (eventName === 'MARKER_APPROVED') {
+            const approvedObject = data?.new_object ?? message?.new_object;
+            if (approvedObject) addIncident(approvedObject);
+          }
+          return;
+        }
+
+        if (eventName === 'new_incident' || eventName === 'new_address' || eventName === 'incident_created' || eventName === 'NEW_INCIDENT') {
+          asArray(data).forEach((item) => addIncident(item));
+          return;
+        }
+
+        if (data?.event === 'CHAT_MESSAGE') {
+          useChatStore.getState().addMessage(data?.incident_id, data?.message);
+          return;
+        }
+
+        if (eventName === 'chat_message' || eventName === 'CHAT_MESSAGE') {
+          const chatPayload = data || message?.message;
+          if (chatPayload) {
+            addChatMessage(chatPayload);
+            if (eventName === 'CHAT_MESSAGE') {
+              addIncidentChatMessage(message?.incident_id, chatPayload);
+            }
+          }
+        }
+      } catch (_error) {
+        // ignore malformed websocket frames
       }
     };
 
     return () => {
-      if (socket && typeof socket.close === 'function') {
-        socket.close();
-      }
+      if (socket && typeof socket.close === 'function') socket.close();
     };
-  }, [url, wsFactory, addIncident, upsertTrackerPosition, setTrackerStatus]);
+  }, [url, wsFactory, updateAgent, addIncident, addChatMessage, upsertPendingMarker, removePendingMarker, addIncidentChatMessage]);
 }

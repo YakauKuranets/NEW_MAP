@@ -7,12 +7,12 @@ PendingHistory / Address. Маршруты в :mod:`app.pending.routes`
 
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, List
 
 from ..extensions import db
 from ..models import Address, PendingMarker, PendingHistory
 from ..helpers import get_current_admin, ensure_zone_access
+from ..realtime.broker import get_broker
 from ..sockets import broadcast_event_sync
 
 
@@ -86,6 +86,8 @@ def approve_pending(pid: int) -> Dict[str, Any]:
     db.session.delete(pending)
     db.session.commit()
 
+    address_payload = address.to_dict()
+
     # уведомляем клиентов
     try:
         broadcast_event_sync(
@@ -94,6 +96,18 @@ def approve_pending(pid: int) -> Dict[str, Any]:
         )
     except Exception:
         # логирование оставляем в маршруте/общем логере
+        pass
+
+    try:
+        get_broker().publish_event(
+            "map_updates",
+            {
+                "event": "MARKER_APPROVED",
+                "marker_id": pid,
+                "new_object": address_payload,
+            },
+        )
+    except Exception:
         pass
 
     return {"status": "ok", "id": address.id}
@@ -132,6 +146,17 @@ def reject_pending(pid: int) -> Dict[str, Any]:
     except Exception:
         pass
 
+    try:
+        get_broker().publish_event(
+            "map_updates",
+            {
+                "event": "MARKER_REJECTED",
+                "marker_id": pid,
+            },
+        )
+    except Exception:
+        pass
+
     return {"status": "ok", "remaining": remaining}
 
 
@@ -143,7 +168,6 @@ def clear_all_pending() -> Dict[str, Any]:
     событие ``pending_cleared``.
     """
     markers = PendingMarker.query.all()
-    now_ts = int(time.time())
 
     for p in markers:
         hist = PendingHistory(

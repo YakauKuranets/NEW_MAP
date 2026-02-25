@@ -1,10 +1,16 @@
-"""Redis broker helpers for realtime Pub/Sub."""
+"""Redis broker helpers for realtime Pub/Sub.
+
+Python здесь выступает:
+- Publisher'ом UI-событий в Redis (канал map_updates)
+- Consumer'ом telemetry_save_queue для батч-сохранения координат в БД
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 try:
@@ -16,6 +22,7 @@ except Exception:  # pragma: no cover
 
 
 DEFAULT_CHANNEL = "map_updates"
+DEFAULT_TELEMETRY_QUEUE = "telemetry_save_queue"
 
 
 def get_redis_url() -> str:
@@ -43,6 +50,47 @@ def get_channel() -> str:
     return (os.getenv("REALTIME_REDIS_CHANNEL") or DEFAULT_CHANNEL).strip() or DEFAULT_CHANNEL
 
 
+def _parse_ts(raw: Any) -> datetime:
+    if raw is None:
+        return datetime.now(timezone.utc)
+    if isinstance(raw, (int, float)):
+        return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return datetime.now(timezone.utc)
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text)
+        except Exception:
+            return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _normalize_telemetry_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    body = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+
+    user_id = body.get("user_id")
+    lat = body.get("lat")
+    lon = body.get("lon")
+    if user_id is None or lat is None or lon is None:
+        return None
+
+    try:
+        return {
+            "user_id": str(user_id),
+            "lat": float(lat),
+            "lon": float(lon),
+            "accuracy_m": float(body.get("accuracy_m")) if body.get("accuracy_m") is not None else None,
+            "kind": str(body.get("kind") or "live")[:16],
+            "ts": _parse_ts(body.get("ts")),
+            "raw_json": json.dumps(body, ensure_ascii=False),
+        }
+    except Exception:
+        return None
+
+
 class RedisBroker:
     """Publisher/subscriber broker over Redis Pub/Sub."""
 
@@ -50,17 +98,33 @@ class RedisBroker:
         self.redis_url = (redis_url or get_redis_url()).strip()
         self._sync_client: Optional[Redis] = None
 
+    def _get_sync_client(self) -> Optional[Redis]:
+        if not self.redis_url or Redis is None:
+            return None
+        if self._sync_client is None:
+            # Переиспользуем один клиент на процесс: без connect/disconnect на каждый publish.
+            self._sync_client = Redis.from_url(self.redis_url, decode_responses=True)
+        return self._sync_client
+
     def publish_event(self, channel: str, payload: Dict[str, Any]) -> bool:
         """Publish raw payload dict into channel."""
-        if not self.redis_url or Redis is None:
+        client = self._get_sync_client()
+        if client is None:
             return False
+
+        body = json.dumps(payload, ensure_ascii=False)
         try:
-            if self._sync_client is None:
-                self._sync_client = Redis.from_url(self.redis_url, decode_responses=True)
-            self._sync_client.publish(channel, json.dumps(payload, ensure_ascii=False))
+            client.publish(channel, body)
             return True
         except Exception:
-            return False
+            # В случае stale-соединения пробуем 1 re-connect и повтор.
+            try:
+                self._sync_client = Redis.from_url(self.redis_url, decode_responses=True)
+                assert self._sync_client is not None
+                self._sync_client.publish(channel, body)
+                return True
+            except Exception:
+                return False
 
     async def listener(
         self,
@@ -134,3 +198,90 @@ async def subscribe_forever(
             await on_event(event, data)
 
     await broker.listener(channel, _on_payload)
+
+
+def flush_telemetry_batch(points: list[Dict[str, Any]]) -> int:
+    """Bulk insert telemetry points into DB in one transaction."""
+    if not points:
+        return 0
+
+    from ..extensions import db
+    from ..models import TrackingPoint
+
+    db.session.bulk_insert_mappings(TrackingPoint, points)
+    db.session.commit()
+    return len(points)
+
+
+async def consume_telemetry_save_queue(
+    *,
+    channel: str = DEFAULT_TELEMETRY_QUEUE,
+    batch_size: int = 100,
+    flush_interval_sec: float = 0.5,
+) -> None:
+    """Consume telemetry queue and flush points to DB in batches."""
+    if redis_async is None:
+        return
+
+    redis_url = get_redis_url()
+    if not redis_url:
+        return
+
+    try:
+        from flask import current_app
+
+        app_ctx_manager = current_app.app_context()
+    except Exception:
+        from app import create_app
+
+        app_ctx_manager = create_app().app_context()
+
+    with app_ctx_manager:
+        redis_conn = redis_async.from_url(redis_url, decode_responses=True)
+        pubsub = redis_conn.pubsub()
+        await pubsub.subscribe(channel)
+
+        batch: list[Dict[str, Any]] = []
+        loop = asyncio.get_running_loop()
+        last_flush = loop.time()
+
+        try:
+            while True:
+                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if msg and msg.get("type") == "message":
+                    raw = msg.get("data")
+                    if raw:
+                        try:
+                            payload = json.loads(raw)
+                            if isinstance(payload, dict):
+                                norm = _normalize_telemetry_payload(payload)
+                                if norm is not None:
+                                    batch.append(norm)
+                        except Exception:
+                            pass
+
+                now = loop.time()
+                if batch and (len(batch) >= batch_size or (now - last_flush) >= flush_interval_sec):
+                    try:
+                        flush_telemetry_batch(batch)
+                    finally:
+                        batch.clear()
+                        last_flush = now
+        finally:
+            if batch:
+                try:
+                    flush_telemetry_batch(batch)
+                finally:
+                    batch.clear()
+            try:
+                await pubsub.unsubscribe(channel)
+            except Exception:
+                pass
+            try:
+                await pubsub.close()
+            except Exception:
+                pass
+            try:
+                await redis_conn.close()
+            except Exception:
+                pass
