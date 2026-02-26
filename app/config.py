@@ -78,12 +78,18 @@ class Config:
     # API Keys
     API_KEY_HEADER = os.environ.get("API_KEY_HEADER", "X-API-Key")
     API_KEY_EXPIRES_DAYS = int(os.environ.get("API_KEY_EXPIRES_DAYS", "365"))
+    LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:11434/api/generate").strip()
+    LLM_MODEL = os.environ.get("LLM_MODEL", "mistral").strip()
 
     # Директория для загрузки фотографий. Она должна существовать,
     # иначе изображения не будут сохраняться. См. app/extensions.py
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
     HANDSHAKE_UPLOAD_FOLDER = os.environ.get("HANDSHAKE_UPLOAD_FOLDER", "/data/handshakes")
     HASHCAT_WORDLIST = os.environ.get("HASHCAT_WORDLIST", "/data/wordlists/rockyou_optimized.txt")
+
+    # --- AI feedback optimization (diagnostics quality improvement) ---
+    AI_FEEDBACK_DATASET_PATH = os.environ.get("AI_FEEDBACK_DATASET_PATH", "/data/ai/diagnostics_feedback.jsonl").strip()
+    AI_FINETUNE_SCRIPT = os.environ.get("AI_FINETUNE_SCRIPT", "/opt/ai/finetune_llm.py").strip()
     HANDSHAKE_MAX_FILE_SIZE_BYTES = int(os.environ.get("HANDSHAKE_MAX_FILE_SIZE_BYTES", str(10 * 1024 * 1024)))
     # Допустимые расширения файлов изображений
     ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}

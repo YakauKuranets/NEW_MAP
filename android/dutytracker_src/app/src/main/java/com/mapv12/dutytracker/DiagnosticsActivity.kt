@@ -11,6 +11,14 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.mapv12.dutytracker.diagnostics.ble.BluetoothDeviceDiscoverer
+import com.mapv12.dutytracker.diagnostics.ports.NetworkPortAnalyzer
+import com.mapv12.dutytracker.diagnostics.ports.PortScanEntity
+import com.mapv12.dutytracker.diagnostics.web.WebServiceAnalyzer
+import com.mapv12.dutytracker.wordlists.WordlistUpdater
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -34,6 +42,9 @@ class DiagnosticsActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvIssues: TextView
     private lateinit var llIssueActions: LinearLayout
+    private lateinit var tvDiagnosticsHint: TextView
+    private lateinit var rvDiagnostics: RecyclerView
+    private val diagnosticsAdapter = DiagnosticsResultAdapter()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,6 +59,10 @@ class DiagnosticsActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tv_status)
         tvIssues = findViewById(R.id.tv_issues)
         llIssueActions = findViewById(R.id.ll_issue_actions)
+        tvDiagnosticsHint = findViewById(R.id.tv_diagnostics_hint)
+        rvDiagnostics = findViewById(R.id.rv_diagnostics_results)
+        rvDiagnostics.layoutManager = LinearLayoutManager(this)
+        rvDiagnostics.adapter = diagnosticsAdapter
 
         findViewById<MaterialButton>(R.id.btn_oem_guide).setOnClickListener {
             startActivity(Intent(this, OemGuideActivity::class.java))
@@ -66,6 +81,19 @@ class DiagnosticsActivity : AppCompatActivity() {
         findViewById<MaterialButton>(R.id.btn_notif_settings).setOnClickListener { SystemActions.openNotificationsSettings(this) }
         findViewById<MaterialButton>(R.id.btn_internet_settings).setOnClickListener { SystemActions.openInternetSettings(this) }
         findViewById<MaterialButton>(R.id.btn_request_ignore_battery_opt).setOnClickListener { SystemActions.requestIgnoreBatteryOptimizations(this) }
+
+        findViewById<MaterialButton>(R.id.btn_ble_scan).setOnClickListener {
+            startBleScan()
+        }
+        findViewById<MaterialButton>(R.id.btn_port_scan).setOnClickListener {
+            startPortScan()
+        }
+        findViewById<MaterialButton>(R.id.btn_web_scan).setOnClickListener {
+            startWebScan()
+        }
+        findViewById<MaterialButton>(R.id.btn_check_updates).setOnClickListener {
+            startWordlistUpdateCheck()
+        }
     }
 
     override fun onResume() {
@@ -194,6 +222,115 @@ class DiagnosticsActivity : AppCompatActivity() {
         }
     }
 
+    private fun startBleScan() {
+        tvDiagnosticsHint.text = "Bluetooth-устройства рядом: выполняется сканирование..."
+        lifecycleScope.launch {
+            val discoverer = BluetoothDeviceDiscoverer(this@DiagnosticsActivity)
+            discoverer.startDiscovery(this, 5000) { devices ->
+                runOnUiThread {
+                    val rows = devices.map {
+                        "${it.address} | RSSI ${it.rssi} dBm | ${it.manufacturer ?: "UNKNOWN"}"
+                    }
+                    diagnosticsAdapter.submit(rows.ifEmpty { listOf("Устройства не обнаружены") })
+                    tvDiagnosticsHint.text = "Bluetooth-устройства рядом"
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    devices.forEach { App.db.bleDeviceDao().insertDevice(it) }
+                }
+            }
+        }
+    }
+
+    private fun startPortScan() {
+        val targetIp = "192.168.1.1"
+        tvDiagnosticsHint.text = "Анализ сетевых портов. Используйте только на своих устройствах."
+        lifecycleScope.launch {
+            val analyzer = NetworkPortAnalyzer()
+            val results = analyzer.scanPorts(targetIp)
+            val openResults = results.filter { it.isOpen }
+            diagnosticsAdapter.submit(
+                openResults.map { "$targetIp:${it.port} ${it.service ?: "Unknown"}" }
+                    .ifEmpty { listOf("Открытые порты не найдены") }
+            )
+
+            withContext(Dispatchers.IO) {
+                openResults.forEach { info ->
+                    App.db.portScanDao().insertScan(
+                        PortScanEntity(
+                            ip = targetIp,
+                            port = info.port,
+                            service = info.service,
+                            isOpen = true
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startWebScan() {
+        val targetIp = "192.168.1.1"
+        tvDiagnosticsHint.text = "Информация о веб-сервисах"
+        lifecycleScope.launch {
+            val webAnalyzer = WebServiceAnalyzer()
+            val webPorts = listOf(80, 443, 8080, 8443)
+            val rows = mutableListOf<String>()
+
+            withContext(Dispatchers.IO) {
+                for (port in webPorts) {
+                    val info = webAnalyzer.analyze(targetIp, port) ?: continue
+                    val row = "$targetIp:${info.port} code=${info.statusCode} auth=${if (info.authRequired) "yes" else "no"} server=${info.serverHeader ?: "-"}"
+                    rows.add(row)
+                    App.db.webServiceDao().insert(webAnalyzer.toEntity(targetIp, info))
+                }
+            }
+
+            diagnosticsAdapter.submit(rows.ifEmpty { listOf("Веб-сервисы не обнаружены") })
+        }
+    }
+
+
+
+    private fun startWordlistUpdateCheck() {
+        tvDiagnosticsHint.text = "Проверка обновления словарей..."
+        lifecycleScope.launch {
+            val updater = WordlistUpdater(this@DiagnosticsActivity)
+            val info = updater.checkForUpdates()
+            if (info == null) {
+                Toast.makeText(this@DiagnosticsActivity, "Уже используется последняя версия", Toast.LENGTH_SHORT).show()
+                tvDiagnosticsHint.text = "Регулярное обновление словарей позволяет выявлять больше распространённых паролей"
+                return@launch
+            }
+
+            androidx.appcompat.app.AlertDialog.Builder(this@DiagnosticsActivity)
+                .setTitle("Доступно обновление")
+                .setMessage("Новая версия словаря (v${info.version}, ${info.size} записей). Загрузить?")
+                .setPositiveButton("Загрузить") { _, _ ->
+                    lifecycleScope.launch {
+                        val file = updater.downloadWordlist(info)
+                        if (file != null) {
+                            val loaded = updater.loadWordlist(info.name)
+                            val count = loaded?.size ?: 0
+                            diagnosticsAdapter.submit(
+                                listOf(
+                                    "Словарь: ${info.name}",
+                                    "Версия: v${info.version}",
+                                    "Записей: $count",
+                                    "Файл: ${file.name}"
+                                )
+                            )
+                            Toast.makeText(this@DiagnosticsActivity, "Обновление загружено", Toast.LENGTH_SHORT).show()
+                            tvDiagnosticsHint.text = "Регулярное обновление словарей позволяет выявлять больше распространённых паролей"
+                        } else {
+                            Toast.makeText(this@DiagnosticsActivity, "Ошибка загрузки", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                .setNegativeButton("Отмена", null)
+                .show()
+        }
+    }
+
     private fun exportJournalAndShare() {
         scope.launch {
             try {
@@ -230,5 +367,34 @@ class DiagnosticsActivity : AppCompatActivity() {
                 Toast.makeText(this@DiagnosticsActivity, "Экспорт лога: ошибка (${e.message})", Toast.LENGTH_LONG).show()
             }
         }
+    }
+}
+
+
+private class DiagnosticsResultAdapter : RecyclerView.Adapter<DiagnosticsResultAdapter.VH>() {
+    private val items = mutableListOf<String>()
+
+    fun submit(rows: List<String>) {
+        items.clear()
+        items.addAll(rows)
+        notifyDataSetChanged()
+    }
+
+    override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH {
+        val tv = TextView(parent.context).apply {
+            setPadding(16, 12, 16, 12)
+            textSize = 12f
+        }
+        return VH(tv)
+    }
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        holder.textView.text = items[position]
+    }
+
+    override fun getItemCount(): Int = items.size
+
+    class VH(itemView: android.view.View) : RecyclerView.ViewHolder(itemView) {
+        val textView: TextView = itemView as TextView
     }
 }

@@ -25,3 +25,13 @@ def create_admin(username: str, email: str, password: str) -> None:
     db.session.add(user)
     db.session.commit()
     click.echo(f'Admin {username} created.')
+
+
+@click.command("update-wordlists")
+@with_appcontext
+def update_wordlists_command() -> None:
+    """Запускает обновление словарей."""
+    from app.tasks.wordlist_updater import update_wordlists
+
+    update_wordlists.delay()
+    click.echo("Wordlist update task enqueued.")
