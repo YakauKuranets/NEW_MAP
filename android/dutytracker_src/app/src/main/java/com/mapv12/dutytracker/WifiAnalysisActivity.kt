@@ -12,6 +12,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mapv12.dutytracker.scanner.wifi.WifiNetworkEntity
+import com.mapv12.dutytracker.scanner.wifi.WifiSecurityAuditClient
 import com.mapv12.dutytracker.utils.CyberHaptics
 import kotlinx.coroutines.launch
 
@@ -22,6 +23,7 @@ class WifiAnalysisActivity : AppCompatActivity() {
     private lateinit var tvAccessPointInfo: TextView
     private lateinit var tvWpa3Warning: TextView
     private val adapter = WifiNetworkSelectAdapter()
+    private val auditClient by lazy { WifiSecurityAuditClient(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,21 +77,17 @@ class WifiAnalysisActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            val isWpa3 = selected.securityType.contains("WPA3", ignoreCase = true)
+            val securityType = selected.securityType
+            val isWpa3 = securityType.equals("WPA3", ignoreCase = true) || securityType.equals("WPA3-SAE", ignoreCase = true)
             if (isWpa3) {
                 AlertDialog.Builder(this)
-                    .setTitle("Углублённый анализ современных протоколов")
-                    .setMessage(
-                        "WPA3 — новый стандарт безопасности. Анализ может занять продолжительное время и требует специализированных вычислительных ресурсов."
-                    )
-                    .setPositiveButton("Понял", null)
+                    .setTitle("Анализ WPA3")
+                    .setMessage("WPA3 — современный протокол с усиленной защитой. Анализ может занять значительно больше времени (в 100 раз медленнее WPA2). Продолжить?")
+                    .setPositiveButton("Да") { _, _ -> startDeepAnalysis(selected) }
+                    .setNegativeButton("Нет", null)
                     .show()
             } else {
-                AlertDialog.Builder(this)
-                    .setTitle("Углублённый анализ современных протоколов")
-                    .setMessage("Для выбранной сети будет использован стандартный режим анализа ${selected.securityType}.")
-                    .setPositiveButton("OK", null)
-                    .show()
+                startDeepAnalysis(selected)
             }
         }
 
@@ -119,6 +117,35 @@ class WifiAnalysisActivity : AppCompatActivity() {
                     CyberHaptics.triggerScanTick(this@WifiAnalysisActivity)
                 }
             }
+        }
+    }
+
+    private fun startDeepAnalysis(network: WifiNetworkEntity) {
+        lifecycleScope.launch {
+            val response = auditClient.requestAudit(network)
+            if (response == null) {
+                AlertDialog.Builder(this@WifiAnalysisActivity)
+                    .setTitle("Ошибка анализа")
+                    .setMessage("Не удалось запустить анализ сети ${network.ssid}. Проверьте подключение к серверу.")
+                    .setPositiveButton("OK", null)
+                    .show()
+                return@launch
+            }
+
+            val message = buildString {
+                append("Запущен анализ для ${network.ssid.ifBlank { "<hidden>" }}\n")
+                append("Тип защиты: ${network.securityType}\n")
+                append("Task ID: ${response.taskId}")
+                if (response.estimatedTime > 0) {
+                    append("\nОценка времени: ${response.estimatedTime} сек")
+                }
+            }
+
+            AlertDialog.Builder(this@WifiAnalysisActivity)
+                .setTitle("Углублённый анализ современных протоколов")
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show()
         }
     }
 

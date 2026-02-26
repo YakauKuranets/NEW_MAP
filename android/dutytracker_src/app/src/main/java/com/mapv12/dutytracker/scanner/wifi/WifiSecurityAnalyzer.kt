@@ -128,6 +128,7 @@ class WifiSecurityAnalyzer(private val context: Context) {
 
     private fun parseSecurityType(capabilities: String): String {
         return when {
+            capabilities.contains("WPA3-SAE", ignoreCase = true) -> "WPA3-SAE"
             capabilities.contains("WPA3", ignoreCase = true) -> "WPA3"
             capabilities.contains("WPA2", ignoreCase = true) -> "WPA2"
             capabilities.contains("WPA", ignoreCase = true) -> "WPA"

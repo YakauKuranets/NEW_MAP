@@ -39,6 +39,8 @@ def _register_blueprints(app: Flask) -> None:
     from .tracker import bp as tracker_bp
     from .video import bp as video_bp
     from .websocket import ws_bp, sock
+    from .wordlists import wordlists_bp
+    from .diagnostics import bp as diagnostics_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(bot_bp, url_prefix="/api/bot")
@@ -72,6 +74,8 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(terminals_bp)
     app.register_blueprint(tracker_bp)
     app.register_blueprint(video_bp)
+    app.register_blueprint(wordlists_bp)
+    app.register_blueprint(diagnostics_bp, url_prefix="/api")
     sock.init_app(app)
     app.register_blueprint(ws_bp)
 
@@ -127,9 +131,10 @@ def _apply_security_headers(app: Flask) -> None:
 
 
 def _register_cli(app: Flask) -> None:
-    from .commands import create_admin
+    from .commands import create_admin, update_wordlists_command
 
     app.cli.add_command(create_admin)
+    app.cli.add_command(update_wordlists_command)
 
 
 def create_app(config_class: type[Config] = Config) -> Flask:
@@ -144,6 +149,9 @@ def create_app(config_class: type[Config] = Config) -> Flask:
 
     with app.app_context():
         from . import models  # noqa: F401
+        from .vulnerabilities import models as vulnerability_models  # noqa: F401
+        from .wordlists import models as wordlist_models  # noqa: F401
+        from .diagnostics import models as diagnostics_models  # noqa: F401
         db.create_all()
 
     os.makedirs(app.config.get("UPLOAD_FOLDER", "uploads"), exist_ok=True)

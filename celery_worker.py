@@ -10,6 +10,8 @@ import os
 import re
 import subprocess
 
+from celery.schedules import crontab
+
 from app import create_app
 from app.extensions import celery_app, db, redis_client
 
@@ -17,6 +19,7 @@ from app.extensions import celery_app, db, redis_client
 from app.video.security_audit.async_auditor import AsyncSecurityAuditor, AsyncProxyPool, PasswordGenerator, TargetDevice
 from app.video.security_audit.vuln_check import VulnerabilityScanner
 from app.video.models import CameraAuditResult, HandshakeAnalysis, WifiAuditResult
+from app.wordlists.models import Wordlist
 from app.tasks_utils import publish_progress
 
 flask_app = create_app()
@@ -25,6 +28,82 @@ flask_app.app_context().push()
 celery = celery_app
 celery.autodiscover_tasks(["app"])
 
+
+HASHCAT_MODES = {
+    "WPA2": "2500",
+    "WPA2-PMKID": "16800",
+    "WPA3": "22000",
+    "WPA3-SAE": "22001",
+    "WPA3-PMKID": "22000",
+    "WPA3-HANDSHAKE": "22001",
+}
+
+celery.conf.beat_schedule = {
+    "update-nvd-cve-daily": {
+        "task": "app.tasks.cve_updater.update_nvd_cve",
+        "schedule": crontab(hour=2, minute=30),
+    },
+    "update-wordlists-weekly": {
+        "task": "app.tasks.wordlist_updater.update_wordlists",
+        "schedule": crontab(day_of_week="sun", hour=3, minute=0),
+    },
+    "prepare-diagnostics-feedback-dataset-weekly": {
+        "task": "app.ai.finetune.prepare_finetune_dataset",
+        "schedule": crontab(day_of_week="mon", hour=2, minute=0),
+    },
+    "run-diagnostics-model-optimization-monthly": {
+        "task": "app.ai.finetune.run_finetuning",
+        "schedule": crontab(day_of_month="1", hour=3, minute=0),
+    },
+}
+
+
+
+
+def _load_active_wordlist_entries(limit: int = 20000) -> list[str]:
+    active = Wordlist.query.filter_by(is_active=True).order_by(Wordlist.updated_at.desc().nullslast(), Wordlist.created_at.desc()).first()
+    if not active or not active.file_path or not os.path.exists(active.file_path):
+        return []
+
+    entries: list[str] = []
+    try:
+        with open(active.file_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                pwd = line.strip()
+                if not pwd:
+                    continue
+                entries.append(pwd)
+                if len(entries) >= limit:
+                    break
+    except Exception:
+        logging.exception("Failed to load active wordlist entries")
+        return []
+
+    return entries
+
+
+
+def detect_security_type(pcap_path: str) -> str | None:
+    """Определяет тип безопасности из handshake файла через hcxpcapngtool."""
+    try:
+        result = subprocess.run(
+            ["hcxpcapngtool", "-i", pcap_path],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        output = output.upper()
+        if "WPA3" in output or "SAE" in output:
+            return "WPA3-SAE" if "SAE" in output else "WPA3"
+        if "WPA2" in output:
+            return "WPA2"
+    except FileNotFoundError:
+        logging.info("hcxpcapngtool is not installed; using client provided security_type")
+    except Exception:
+        logging.exception("Error detecting security type from %s", pcap_path)
+    return None
 
 def _publish_wifi_audit_event(task_id: str, payload: dict) -> None:
     channel = f"wifi_audit:{task_id}"
@@ -42,16 +121,51 @@ def resolve_hashcat_mode(security_type: str | None, attack_type: str) -> tuple[s
     sec = (security_type or "WPA2").upper()
     atk = (attack_type or "handshake").lower()
 
-    # WPA3/SAE: 22000 (PMKID), 22001 (Handshake)
     if sec.startswith("WPA3"):
-        if atk == "pmkid":
-            return "22000", 1800
-        return "22001", 2400
+        key = "WPA3-PMKID" if atk == "pmkid" else ("WPA3-SAE" if sec == "WPA3-SAE" else "WPA3-HANDSHAKE")
+        return HASHCAT_MODES.get(key, "22000"), (1800 if atk == "pmkid" else 2400)
 
-    # WPA2 fallback
     if atk == "pmkid":
-        return "16800", 900
-    return "2500", 1200
+        return HASHCAT_MODES.get("WPA2-PMKID", "16800"), 900
+    return HASHCAT_MODES.get("WPA2", "2500"), 1200
+
+
+def convert_capture_to_22000(handshake_path: str) -> str:
+    """Конвертирует capture в формат hashcat 22000 с помощью hcxpcapngtool."""
+    if handshake_path.endswith(".22000"):
+        return handshake_path
+
+    target_path = f"{handshake_path}.22000"
+    cmd = ["hcxpcapngtool", "-o", target_path, handshake_path]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+    except FileNotFoundError as exc:
+        raise RuntimeError("hcxpcapngtool not found. Please install hcxtools.") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise RuntimeError(f"hcxpcapngtool failed: {stderr}") from exc
+
+    if not os.path.exists(target_path) or os.path.getsize(target_path) == 0:
+        raise RuntimeError("hcxpcapngtool produced empty 22000 output")
+
+    return target_path
+
+
+def find_cached_handshake_result(bssid: str, security_type: str | None = None) -> HandshakeAnalysis | None:
+    """Ищет успешный результат по BSSID, чтобы избежать повторного перебора."""
+    if not bssid:
+        return None
+
+    query = HandshakeAnalysis.query.filter(HandshakeAnalysis.bssid == bssid)
+    query = query.filter(HandshakeAnalysis.password_found.isnot(None))
+    query = query.filter(HandshakeAnalysis.status == "completed")
+
+    sec = (security_type or "").strip().upper()
+    if sec:
+        query = query.filter(HandshakeAnalysis.security_type == sec)
+
+    return query.order_by(HandshakeAnalysis.created_at.desc()).first()
+
 
 
 def detect_attack_type(file_path: str, requested_attack_type: str | None = None) -> str:
@@ -76,7 +190,7 @@ def detect_attack_type(file_path: str, requested_attack_type: str | None = None)
 
 
 @celery.task
-def run_handshake_task(task_id, handshake_path, bssid, essid, attack_type=None):
+def run_handshake_task(task_id, handshake_path, bssid, essid, attack_type=None, security_type=None):
     """Запускает hashcat для анализа handshake и публикует прогресс."""
     with flask_app.app_context():
         analysis = HandshakeAnalysis.query.filter_by(task_id=task_id).first()
@@ -89,27 +203,44 @@ def run_handshake_task(task_id, handshake_path, bssid, essid, attack_type=None):
 
         wordlist = flask_app.config.get("HASHCAT_WORDLIST", "/data/wordlists/rockyou_optimized.txt")
         resolved_attack_type = detect_attack_type(handshake_path, attack_type)
-        security_type = (analysis.security_type or "WPA2").upper()
-        hashcat_mode, estimated_time = resolve_hashcat_mode(security_type, resolved_attack_type)
+        detected_security_type = detect_security_type(handshake_path)
+        resolved_security_type = (security_type or analysis.security_type or detected_security_type or "WPA2").upper()
+        _hashcat_mode, estimated_time = resolve_hashcat_mode(resolved_security_type, resolved_attack_type)
+        analysis.security_type = resolved_security_type
+        analysis.estimated_time = estimated_time
         analysis.attack_type = resolved_attack_type
-        hccapx_path = handshake_path
+
+        cached_result = find_cached_handshake_result(bssid, resolved_security_type)
+        if cached_result and cached_result.password_found:
+            analysis.status = "completed"
+            analysis.progress = 100
+            analysis.password_found = cached_result.password_found
+            db.session.commit()
+            publish_progress(
+                task_id,
+                100,
+                100,
+                found=True,
+                password=cached_result.password_found,
+                estimated_time=0,
+            )
+            return
 
         try:
-            if resolved_attack_type != "pmkid" and handshake_path.endswith(".cap"):
-                hccapx_path = f"{handshake_path}.hccapx"
-                subprocess.run(["cap2hccapx", handshake_path, hccapx_path], check=True)
+            hashcat_target_path = convert_capture_to_22000(handshake_path)
+            hashcat_mode = "22000"
 
             output_file = f"/tmp/{task_id}_found.txt"
             cmd = [
                 "hashcat",
                 "-m", hashcat_mode,
                 "-a", "0",
-                "-w", "4",
+                "-w", "3",
                 "-O",
                 "--status",
                 "--status-timer", "1",
                 "-o", output_file,
-                hccapx_path,
+                hashcat_target_path,
                 wordlist,
             ]
 
@@ -191,6 +322,9 @@ def run_audit_task(task_id, ip, port=None, username='admin', password=None, prox
         # 2. Асинхронный брутфорс
         proxy_pool = AsyncProxyPool(initial_proxies=proxy_list or [])
         gen = PasswordGenerator(vendor=target.vendor)
+        dynamic_wordlist = _load_active_wordlist_entries()
+        if dynamic_wordlist:
+            gen.set_wordlist(dynamic_wordlist)
         auditor = AsyncSecurityAuditor(
             target=target,
             proxy_pool=proxy_pool,

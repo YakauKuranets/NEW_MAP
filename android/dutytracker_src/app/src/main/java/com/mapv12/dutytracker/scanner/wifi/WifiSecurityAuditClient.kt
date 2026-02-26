@@ -6,12 +6,15 @@ import com.mapv12.dutytracker.SecureStores
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 class WifiSecurityAuditClient(
@@ -49,7 +52,7 @@ class WifiSecurityAuditClient(
         return ws
     }
 
-    suspend fun requestAudit(network: WifiNetworkEntity): AuditStartResponse? {
+    suspend fun requestAudit(network: WifiNetworkEntity): AuditStartResponse? = withContext(Dispatchers.IO) {
         val payload = JSONObject().apply {
             put("ssid", network.ssid)
             put("essid", network.ssid)
@@ -67,7 +70,7 @@ class WifiSecurityAuditClient(
 
         applyAuthHeaders(requestBuilder)
 
-        return runCatching {
+        return@withContext runCatching {
             client.newCall(requestBuilder.build()).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val body = resp.body?.string().orEmpty()
@@ -83,6 +86,41 @@ class WifiSecurityAuditClient(
         }.getOrNull()
     }
 
+
+
+
+    suspend fun uploadHandshakeFile(
+        file: File,
+        bssid: String,
+        essid: String,
+        securityType: String,
+        attackType: String = "handshake"
+    ): JSONObject? = withContext(Dispatchers.IO) {
+        val base = Config.getBaseUrl(context).trim().trimEnd('/')
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("file", file.name, file.asRequestBody("application/octet-stream".toMediaType()))
+            .addFormDataPart("bssid", bssid)
+            .addFormDataPart("essid", essid)
+            .addFormDataPart("attack_type", attackType)
+            .addFormDataPart("security_type", securityType.ifBlank { "WPA2" })
+            .build()
+
+        val requestBuilder = Request.Builder()
+            .url(base + "/api/video/handshake/upload")
+            .post(body)
+
+        applyAuthHeaders(requestBuilder)
+
+        return@withContext runCatching {
+            client.newCall(requestBuilder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val bodyText = resp.body?.string().orEmpty()
+                if (bodyText.isBlank()) return@use null
+                JSONObject(bodyText)
+            }
+        }.getOrNull()
+    }
 
     suspend fun getAuditStatus(taskId: String): AuditStatus? = withContext(Dispatchers.IO) {
         val url = Config.getBaseUrl(context).trim().trimEnd('/') + "/api/video/wifi/audit/status/$taskId"
@@ -175,13 +213,23 @@ data class AuditStatus(
 )
 
 
-class TaskProgressListener(private val onProgress: (current: Int, total: Int) -> Unit) : WebSocketListener() {
+class TaskProgressListener(private val onProgress: (current: Int, total: Int, estimated: Int) -> Unit) : WebSocketListener() {
     override fun onMessage(webSocket: WebSocket, text: String) {
         val json = JSONObject(text)
         if (json.optString("type") == "progress") {
             val current = json.optInt("current", 0)
             val total = json.optInt("total", 100)
-            onProgress(current, total)
+            val estimated = json.optInt("estimated", json.optInt("estimated_time", -1))
+            onProgress(current, total, estimated)
         }
+    }
+}
+
+
+fun formatTime(seconds: Int): String {
+    return when {
+        seconds < 60 -> "$seconds сек"
+        seconds < 3600 -> "${seconds / 60} мин ${seconds % 60} сек"
+        else -> "${seconds / 3600} ч ${(seconds % 3600) / 60} мин"
     }
 }
