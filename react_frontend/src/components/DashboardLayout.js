@@ -2,7 +2,18 @@ import React from 'react';
 import { Map, Users, Settings, Plus } from 'lucide-react';
 import TopBar from './TopBar';
 import CTIConsole from './CTIConsole';
+import IdentityGraphPanel from './IdentityGraphPanel';
 import useMapStore from '../store/useMapStore';
+
+
+const mockData = {
+  alias: 'apt-ghost',
+  connections: [
+    { entity: 'bc1q7x...f93k', type: 'CRYPTO_WALLET', relation: 'RECEIVED_FUNDS' },
+    { entity: 'UTC+3 (based on activity hours and slang)', type: 'TIMEZONE', relation: 'OPERATES_IN' },
+    { entity: '0xDEADBEEF_PGP', type: 'PGP_KEY', relation: 'SIGNED_WITH' },
+  ],
+};
 
 function NavButton({ active, icon, label, onClick }) {
   return (
@@ -39,6 +50,8 @@ export default function DashboardLayout({ children, activeTab, onTabChange }) {
   return (
     <div className="relative h-screen w-full overflow-hidden bg-black text-slate-100">
       {children}
+
+      <IdentityGraphPanel actorData={mockData} />
 
       <div className="pointer-events-none absolute inset-0 z-40">
         <TopBar />

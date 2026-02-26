@@ -21,7 +21,8 @@
     "zustand": "^4.5.5",
     "supercluster": "^8.0.1",
     "@react-three/fiber": "^8.17.10",
-    "@react-three/postprocessing": "^2.16.3"
+    "@react-three/postprocessing": "^2.16.3",
+    "react-force-graph-2d": "^1.27.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.8",

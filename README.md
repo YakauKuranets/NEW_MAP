@@ -211,3 +211,19 @@ pytest -q -m e2e
 - включается `RETENTION_SCHEDULER_ENABLED=1`
 - период: `RETENTION_SCHEDULER_EVERY_MINUTES`
 - если задан `REDIS_URL`, используется Redis-lock, чтобы избежать дублирования при нескольких воркерах
+
+## OSINT Kraken: SOCMINT и биометрия (зависимости)
+
+Для модулей `playwright-stealth` и `face_recognition` помимо Python-пакетов нужны системные зависимости:
+
+- `face_recognition` требует `dlib` и компиляторный toolchain;
+- на Linux обязательно установить `cmake` (или пакет вида `cmake-base`, в зависимости от дистрибутива), `build-essential`, `python3-dev`.
+
+Пример (Debian/Ubuntu):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y cmake build-essential python3-dev
+```
+
+Без этих пакетов биометрический модуль сравнения лиц не соберётся/не запустится.
