@@ -1,6 +1,7 @@
 import React from 'react';
 import { Map, Users, Settings, Plus } from 'lucide-react';
 import TopBar from './TopBar';
+import CTIConsole from './CTIConsole';
 import useMapStore from '../store/useMapStore';
 
 function NavButton({ active, icon, label, onClick }) {
@@ -49,6 +50,8 @@ export default function DashboardLayout({ children, activeTab, onTabChange }) {
             <NavButton active={activeTab === 'agents'} onClick={() => onTabChange('agents')} icon={<Users className="h-4 w-4" />} label="Agents" />
             <NavButton active={activeTab === 'settings'} onClick={() => onTabChange('settings')} icon={<Settings className="h-4 w-4" />} label="Settings" />
           </div>
+
+          <CTIConsole />
 
           <button
             onClick={handleManualAdd}

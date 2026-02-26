@@ -102,3 +102,71 @@ def send_agent_command(agent_id: int):
     db.session.commit()
 
     return jsonify({"status": "accepted", "agentId": agent_id, "command": command})
+
+
+@bp.post("/run")
+def run_diagnostic_task():
+    """
+    Принимает задачу от оператора и ставит её в очередь выполнения.
+    Все операции выполняются с использованием authorised методов.
+    """
+    from app.tasks.diagnostics_tasks import run_security_scan
+
+    payload = request.get_json(silent=True) or {}
+    target = (payload.get("target") or "").strip()
+    task_type = (payload.get("task_type") or "").strip().upper()
+    use_anonymizer = bool(payload.get("use_anonymizer", True))
+    context = payload.get("context")
+
+    allowed = {
+        "WEB_DIR_ENUM",
+        "PORT_SCAN",
+        "OSINT_RECON",
+        "PHISHING_SIMULATION",
+        "AI_TEST_GEN",
+    }
+
+    if not target:
+        return jsonify({"status": "error", "message": "target is required"}), 400
+    if task_type not in allowed:
+        return jsonify({"status": "error", "message": "Unsupported task_type"}), 400
+
+    logger_payload = {
+        "target": target,
+        "task_type": task_type,
+        "anonymizer": use_anonymizer,
+    }
+
+    message = f"Задача {task_type} поставлена в очередь."
+
+    if task_type == "PHISHING_SIMULATION":
+        if not context:
+            return jsonify({"status": "error", "message": "Для симуляции фишинга требуется email (поле context)"}), 400
+        message = f"Симуляция фишинга запущена для {context} (цель {target})"
+
+    elif task_type == "AI_TEST_GEN":
+        if not context:
+            return jsonify({"status": "error", "message": "Для генерации тестов требуется CVE (поле context)"}), 400
+        message = f"Генерация тестового сценария для {context} (цель {target})"
+
+    target_record = DiagnosticTarget(
+        target_type="cti_task",
+        identifier=target,
+        status="queued",
+        context={"task_type": task_type, "use_anonymizer": use_anonymizer, "context": context},
+        result={},
+    )
+    db.session.add(target_record)
+    db.session.commit()
+
+    task = run_security_scan.delay(target_record.id, target, task_type, use_anonymizer, context)
+
+    return jsonify({
+        "status": "accepted",
+        "target": target,
+        "task_type": task_type,
+        "task_id": task.id,
+        "diagnostic_id": target_record.id,
+        "message": message,
+        "meta": logger_payload,
+    })

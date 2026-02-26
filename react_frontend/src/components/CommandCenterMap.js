@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import DeckGL from '@deck.gl/react';
-import { IconLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
+import { ColumnLayer, IconLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { FlyToInterpolator, WebMercatorViewport } from '@deck.gl/core';
 import Map, { Marker } from 'react-map-gl/maplibre';
 import { Loader2, Lock, Radar, Search } from 'lucide-react';
@@ -72,6 +72,7 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
   const agentsMap = useMapStore((s) => s.agents);
   const agentsData = useMapStore((s) => s.getAgentsArray());
   const trackPointsData = useMapStore((s) => s.getTracksArray());
+  const threatsData = useMapStore((s) => s.getThreatsArray());
   const incidents = useMapStore((s) => s.incidents);
   const pendingMarkers = useMapStore((s) => s.pendingMarkers);
   const terminals = useMapStore((s) => s.terminals || s.markers || []);
@@ -306,6 +307,31 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
       },
     });
 
+
+    const threatPillarLayer = new ColumnLayer({
+      id: 'threat-pillar-layer',
+      data: threatsData,
+      diskResolution: 6,
+      radius: 15,
+      extruded: true,
+      pickable: true,
+      elevationScale: 1,
+      getPosition: (d) => [parseFloat(d.lon), parseFloat(d.lat)],
+      getFillColor: () => [255, 176, 0, 180],
+      getLineColor: () => [255, 176, 0, 255],
+      getElevation: () => 150,
+      updateTriggers: {
+        getPosition: [threatsData],
+        getFillColor: [threatsData],
+      },
+      transitions: {
+        getElevation: {
+          duration: 800,
+          type: 'spring',
+        },
+      },
+    });
+
     const clusterLabelLayer = new TextLayer({
       id: 'cluster-count-layer',
       data: clusteredData.filter((d) => d.properties.cluster),
@@ -324,8 +350,8 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
       },
     });
 
-    return [neonTracksLayer, neonAgentsLayer, iconLayer, clusterLabelLayer];
-  }, [agentsData, clusteredData, sosPulse, trackPointsData]);
+    return [neonTracksLayer, neonAgentsLayer, iconLayer, threatPillarLayer, clusterLabelLayer];
+  }, [agentsData, clusteredData, sosPulse, trackPointsData, threatsData]);
 
   const forwardGeocode = async () => {
     const q = (formValues.address || '').trim();

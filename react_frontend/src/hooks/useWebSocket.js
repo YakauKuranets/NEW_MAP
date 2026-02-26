@@ -22,6 +22,7 @@ export default function useWebSocket({
   const upsertPendingMarker = useMapStore((s) => s.upsertPendingMarker);
   const removePendingMarker = useMapStore((s) => s.removePendingMarker);
   const setTelemetry = useMapStore((s) => s.setTelemetry);
+  const addThreatAlert = useMapStore((s) => s.addThreatAlert);
 
   const addIncidentChatMessage = useChatStore((s) => s.addMessage);
 
@@ -52,6 +53,12 @@ export default function useWebSocket({
 
         if (eventName === 'SYS_TELEMETRY') {
           setTelemetry(data);
+          return;
+        }
+
+
+        if (eventName === 'THREAT_INTEL_ALERT') {
+          addThreatAlert(data);
           return;
         }
 
@@ -104,5 +111,5 @@ export default function useWebSocket({
     return () => {
       if (socket && typeof socket.close === 'function') socket.close();
     };
-  }, [url, wsFactory, updateAgent, updateAgentLocation, addIncident, addChatMessage, upsertPendingMarker, removePendingMarker, setTelemetry, addIncidentChatMessage]);
+  }, [url, wsFactory, updateAgent, updateAgentLocation, addIncident, addChatMessage, upsertPendingMarker, removePendingMarker, setTelemetry, addIncidentChatMessage, addThreatAlert]);
 }

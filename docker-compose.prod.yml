@@ -7,6 +7,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - mapv12_redisdata:/data
+    networks:
+      - dutytracker_network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -27,6 +29,8 @@ services:
       - ./uploads:/app/uploads
     ports:
       - "8000:8000"
+    networks:
+      - dutytracker_network
     restart: unless-stopped
 
   bot:
@@ -41,6 +45,8 @@ services:
       - ./app.db:/app/app.db
     depends_on:
       - web
+    networks:
+      - dutytracker_network
     restart: unless-stopped
   worker:
     build: .
@@ -64,5 +70,32 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - dutytracker_network
     restart: unless-stopped
+
+
+  proxy:
+    image: dperson/torproxy
+    container_name: dutytracker_proxy
+    ports:
+      - "9050:9050"   # SOCKS5-прокси для маршрутизации трафика
+      - "9051:9051"   # Управляющий порт (опционально)
+    environment:
+      - TOR_MAX_CIRCUIT_DIRTINESS=30   # Периодическая смена выходных узлов
+    networks:
+      - dutytracker_network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  dutytracker_network:
+    driver: bridge
+
+volumes:
+  mapv12_redisdata:
 

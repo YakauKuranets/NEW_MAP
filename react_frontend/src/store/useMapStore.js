@@ -4,6 +4,7 @@ const initialState = {
   agents: {},
   trackPoints: {},
   incidents: [],
+  threatAlerts: {},
   pendingMarkers: [],
   selectedObject: null,
   trackers: {},
@@ -171,6 +172,32 @@ const useMapStore = create((set, get) => ({
     telemetry: { ...state.telemetry, ...(data || {}) },
   })),
 
+
+  addThreatAlert: (payload) => set((state) => {
+    if (!payload) return state;
+
+    const id = payload.id || `threat-${Date.now()}`;
+    const threatPayload = { ...payload, id };
+
+    setTimeout(() => {
+      set((s) => {
+        const newThreats = { ...s.threatAlerts };
+        delete newThreats[id];
+        return { threatAlerts: newThreats };
+      });
+    }, 30000);
+
+    return {
+      threatAlerts: { ...state.threatAlerts, [id]: threatPayload },
+      incidents: [...state.incidents, {
+        id,
+        priority: payload.severity === 'CRITICAL' ? 'CRITICAL' : 'HIGH',
+        timestamp: Date.now(),
+        description: `[DARKNET_DUMP] Утечка: ${String(payload.secret_type || 'unknown').toUpperCase()} | Цель: OBJ_${payload.object_id ?? 'N/A'} | Дамп: ${payload.snippet || ''}`,
+      }].slice(-50),
+    };
+  }),
+
   // compatibility with older components
   upsertTrackerPosition: (trackerId, payload) => set((state) => ({
     trackers: {
@@ -210,6 +237,7 @@ const useMapStore = create((set, get) => ({
 
   getAgentsArray: () => Object.values(get().agents),
   getTracksArray: () => Object.values(get().trackPoints),
+  getThreatsArray: () => Object.values(get().threatAlerts),
 
   reset: () => set({ ...initialState }),
 }));

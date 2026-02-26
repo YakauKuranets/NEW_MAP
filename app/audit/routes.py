@@ -1,13 +1,18 @@
-"""Audit API (superadmin only)."""
+# -*- coding: utf-8 -*-
+"""Audit API (superadmin) и запуск диагностических задач."""
 
 from __future__ import annotations
+
+import logging
 
 from flask import Blueprint, jsonify, request
 
 from ..helpers import require_admin
 from ..models import AdminAuditLog
+from ..tasks.diagnostics_tasks import run_security_scan
 
 bp = Blueprint('audit', __name__)
+logger = logging.getLogger(__name__)
 
 
 @bp.get('/')
@@ -35,3 +40,36 @@ def list_audit():
 
     rows = q.order_by(AdminAuditLog.ts.desc()).offset(offset).limit(limit).all()
     return jsonify([r.to_dict() for r in rows]), 200
+
+
+@bp.post('/start')
+def start_security_scan():
+    """
+    Запускает выбранный профиль диагностики для указанной цели.
+    Все операции выполняются в рамках authorised тестирования.
+    """
+    require_admin(min_role='superadmin')
+    payload = request.get_json(silent=True) or {}
+
+    target = (payload.get('target') or '').strip()
+    profile = (payload.get('scan_profile') or '').strip().upper()
+    use_proxy = bool(payload.get('use_proxy', True))
+
+    allowed_profiles = {'WEB_DIR_SCAN', 'PORT_SCAN', 'OSINT_DEEP'}
+    if not target:
+        return jsonify(error='target is required'), 400
+    if profile not in allowed_profiles:
+        return jsonify(error='scan_profile is invalid'), 400
+
+    logger.info('Запуск диагностики для цели %s, профиль %s, прокси=%s', target, profile, use_proxy)
+    task = run_security_scan.delay(None, target, profile, use_proxy, None)
+
+    return jsonify(
+        {
+            'status': 'accepted',
+            'task_id': task.id,
+            'target': target,
+            'profile': profile,
+            'message': "Диагностика запущена. Результаты появятся в разделе 'Результаты'.",
+        }
+    ), 202
