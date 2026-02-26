@@ -81,6 +81,19 @@ class Config:
     LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:11434/api/generate").strip()
     LLM_MODEL = os.environ.get("LLM_MODEL", "mistral").strip()
 
+    # Пути к ML-моделям
+    BERT_PASSWORD_MODEL = os.environ.get("BERT_PASSWORD_MODEL", "/models/password-bert")
+    LEAK_CLASSIFIER_PATH = os.environ.get("LEAK_CLASSIFIER_PATH", "/models/leak-classifier")
+
+    # Целевые объекты для мониторинга
+    TARGET_EMAILS = os.environ.get("TARGET_EMAILS", "").split(",")
+    TARGET_DOMAINS = os.environ.get("TARGET_DOMAINS", "").split(",")
+
+    # SIEM настройки по умолчанию
+    SIEM_EXPORT_BATCH_SIZE = os.environ.get("SIEM_EXPORT_BATCH_SIZE", 100)
+    SIEM_RETRY_MAX_ATTEMPTS = os.environ.get("SIEM_RETRY_MAX_ATTEMPTS", 3)
+    SIEM_CLEANUP_DAYS = os.environ.get("SIEM_CLEANUP_DAYS", 30)
+
     SHODAN_API_KEY = os.environ.get("SHODAN_API_KEY", "").strip()
     CENSYS_API_ID = os.environ.get("CENSYS_API_ID", "").strip()
     CENSYS_SECRET = os.environ.get("CENSYS_SECRET", "").strip()

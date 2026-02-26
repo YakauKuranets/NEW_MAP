@@ -31,3 +31,6 @@ shodan
 stem>=1.8
 PySocks>=1.7
 scapy>=2.5
+elasticsearch==8.17.0
+opensearch-py==2.7.0
+requests>=2.31.0
