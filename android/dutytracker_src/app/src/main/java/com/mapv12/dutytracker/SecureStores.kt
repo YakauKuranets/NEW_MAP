@@ -1,12 +1,28 @@
 package com.mapv12.dutytracker
 
 import android.content.Context
+import android.util.Base64
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 object SecureStores {
     private const val PREF_SECURE = "dutytracker_secure"
     private const val KEY_DEVICE_TOKEN = "device_token"
+
+    private const val KEY_DB_PASSPHRASE = "db_passphrase"
+
+    fun getOrCreateDbPassphrase(ctx: Context): String {
+        securePrefs(ctx).getString(KEY_DB_PASSPHRASE, null)?.let { existing ->
+            if (existing.isNotBlank()) return existing
+        }
+
+        val bytes = ByteArray(32)
+        java.security.SecureRandom().nextBytes(bytes)
+        val generated = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        securePrefs(ctx).edit().putString(KEY_DB_PASSPHRASE, generated).apply()
+        bytes.fill(0)
+        return generated
+    }
 
     private fun securePrefs(ctx: Context) = try {
         val masterKey = MasterKey.Builder(ctx)
