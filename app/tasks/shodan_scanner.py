@@ -5,23 +5,53 @@ import shodan
 from celery import shared_task
 
 from app.extensions import db
-from app.video.models import GlobalCamera
-
-
 SHODAN_API_KEY = os.environ.get('SHODAN_API_KEY', 'your_key_here')
 
 
+def _global_camera_model():
+    """Lazy import to avoid heavy video package side-effects during worker/test import."""
+    from app.video.models import GlobalCamera
+
+    return GlobalCamera
+
+
+def _build_shodan_client(api_key: str, *, tor_session=None):
+    """Create Shodan API client with optional requests session (Tor)."""
+    if tor_session is None:
+        return shodan.Shodan(api_key)
+    try:
+        return shodan.Shodan(api_key, requests_session=tor_session)
+    except TypeError:
+        # Compatibility: some shodan versions may not accept requests_session.
+        return shodan.Shodan(api_key)
+
+
 @shared_task
-def scan_shodan_for_cameras(query='product:"Hikvision" OR product:"Dahua"', limit=100):
+def scan_shodan_for_cameras(query='product:"Hikvision" OR product:"Dahua"', limit=100, use_tor=False):
     """
     Периодическая задача для сбора информации о камерах через Shodan.
     Результаты сохраняются в БД для последующего анализа.
+
+    :param use_tor: если True, запросы к Shodan выполняются через Tor SOCKS5 прокси.
     """
     if not SHODAN_API_KEY or SHODAN_API_KEY == 'your_key_here':
         return 'Ошибка Shodan: SHODAN_API_KEY не задан'
 
-    api = shodan.Shodan(SHODAN_API_KEY)
+    tor_client = None
     try:
+        if use_tor:
+            from app.network.tor_client import TorProxyClient
+
+            tor_client = TorProxyClient()
+            current_ip = tor_client.get_current_ip()
+            if current_ip:
+                print(f"[shodan] scanning with Tor IP: {current_ip}")
+
+        api = _build_shodan_client(
+            SHODAN_API_KEY,
+            tor_session=(tor_client.session if tor_client is not None else None),
+        )
+
         results = api.search(query, limit=limit)
         matches = results.get('matches', [])
         for match in matches:
@@ -29,6 +59,7 @@ def scan_shodan_for_cameras(query='product:"Hikvision" OR product:"Dahua"', limi
             if not ip_value:
                 continue
 
+            GlobalCamera = _global_camera_model()
             existing = GlobalCamera.query.filter_by(ip=ip_value).first()
             data = {
                 'ip': ip_value,
@@ -51,7 +82,14 @@ def scan_shodan_for_cameras(query='product:"Hikvision" OR product:"Dahua"', limi
                 db.session.add(new_cam)
 
         db.session.commit()
+
+        if tor_client is not None:
+            tor_client.renew_identity()
+
         return f"Найдено {results.get('total', 0)} устройств, сохранено {len(matches)}"
     except Exception as e:
         db.session.rollback()
         return f"Ошибка Shodan: {e}"
+    finally:
+        if tor_client is not None:
+            tor_client.close()

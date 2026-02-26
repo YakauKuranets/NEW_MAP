@@ -81,6 +81,10 @@ class Config:
     LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:11434/api/generate").strip()
     LLM_MODEL = os.environ.get("LLM_MODEL", "mistral").strip()
 
+    SHODAN_API_KEY = os.environ.get("SHODAN_API_KEY", "").strip()
+    CENSYS_API_ID = os.environ.get("CENSYS_API_ID", "").strip()
+    CENSYS_SECRET = os.environ.get("CENSYS_SECRET", "").strip()
+
     # Директория для загрузки фотографий. Она должна существовать,
     # иначе изображения не будут сохраняться. См. app/extensions.py
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
@@ -274,6 +278,14 @@ class Config:
     RETENTION_SCHEDULER_LOCK_KEY = os.environ.get("RETENTION_SCHEDULER_LOCK_KEY", "mapv12:retention:lock")
     RETENTION_SCHEDULER_LOCK_TTL_SEC = int(os.environ.get("RETENTION_SCHEDULER_LOCK_TTL_SEC", "600"))
 
+    TELEGRAM_ALERT_CHAT_ID = os.environ.get("TELEGRAM_ALERT_CHAT_ID", "").strip()
+
+    MAIL_SERVER = os.environ.get("MAIL_SERVER", "").strip()
+    MAIL_PORT = int(os.environ.get("MAIL_PORT", "587"))
+    MAIL_USERNAME = os.environ.get("MAIL_USERNAME", "").strip()
+    MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "").strip()
+    MAIL_USE_TLS = (os.environ.get("MAIL_USE_TLS", "1") or "1").strip().lower() in {"1", "true", "yes", "y"}
+
     # Bot API (Telegram) rate limits (best-effort)
     RATE_LIMIT_BOT_MARKERS_PER_MINUTE = int(os.environ.get("RATE_LIMIT_BOT_MARKERS_PER_MINUTE", "60"))
     RATE_LIMIT_BOT_STATUS_PER_MINUTE = int(os.environ.get("RATE_LIMIT_BOT_STATUS_PER_MINUTE", "180"))
@@ -302,7 +314,11 @@ class Config:
                 "query": 'product:"Hikvision" OR product:"Dahua"',
                 "limit": 100,
             },
-        }
+        },
+        "check-security-alerts": {
+            "task": "app.alerting.checker.check_alerts",
+            "schedule": float(os.environ.get("ALERT_CHECK_INTERVAL_SEC", "60")),
+        },
     }
     # --- Schedulers (background worker) ---
     # Важно: в проде планировщики должны работать в отдельном worker-контейнере.

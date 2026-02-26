@@ -66,3 +66,22 @@ class DiagnosticsAgent(db.Model):
             "metadata": self.details or {},
             "lastSeenAt": self.last_seen_at.isoformat() if self.last_seen_at else None,
         }
+
+
+class AlertSubscription(db.Model):
+    __tablename__ = "alert_subscriptions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    min_severity = db.Column(db.Integer, default=7, nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "email": self.email,
+            "min_severity": int(self.min_severity or 0),
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "isActive": bool(self.is_active),
+        }

@@ -28,3 +28,6 @@ flask-sock>=0.7
 hashcat
 
 shodan
+stem>=1.8
+PySocks>=1.7
+scapy>=2.5

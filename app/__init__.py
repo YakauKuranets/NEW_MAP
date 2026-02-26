@@ -15,6 +15,7 @@ def _register_blueprints(app: Flask) -> None:
     from .addresses import bp as addresses_bp
     from .admin import bp as admin_bp
     from .admin_users import bp as admin_users_bp
+    from .alerting import bp as alerting_bp
     from .analytics import bp as analytics_bp
     from .audit.routes import bp as audit_bp
     from .auth import bp as auth_bp
@@ -59,6 +60,7 @@ def _register_blueprints(app: Flask) -> None:
 
     app.register_blueprint(admin_users_bp)
     app.register_blueprint(analytics_bp)
+    app.register_blueprint(alerting_bp)
     app.register_blueprint(audit_bp, url_prefix="/api/audit")
     app.register_blueprint(chat_bp)
     app.register_blueprint(event_chat_bp)
@@ -152,6 +154,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         from .vulnerabilities import models as vulnerability_models  # noqa: F401
         from .wordlists import models as wordlist_models  # noqa: F401
         from .diagnostics import models as diagnostics_models  # noqa: F401
+        from .alerting import models as alerting_models  # noqa: F401
         db.create_all()
 
     os.makedirs(app.config.get("UPLOAD_FOLDER", "uploads"), exist_ok=True)

@@ -8,9 +8,12 @@ from typing import Any
 
 from openai import OpenAI
 
-from .extensions import celery_app, db
-from .models import PendingMarker
-from .realtime.broker import get_broker
+from app.extensions import celery_app, db
+from app.models import PendingMarker
+from app.realtime.broker import get_broker
+from app.alerting import checker as alerting_checker  # noqa: F401
+from app.tasks import reports_delivery as reports_delivery_tasks  # noqa: F401
+from app.tasks import diagnostics_scans as diagnostics_scans_tasks  # noqa: F401
 
 
 @celery_app.task(bind=True)
