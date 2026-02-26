@@ -16,10 +16,12 @@ export default function useWebSocket({
   wsFactory,
 } = {}) {
   const updateAgent = useMapStore((s) => s.updateAgent);
+  const updateAgentLocation = useMapStore((s) => s.updateAgentLocation);
   const addIncident = useMapStore((s) => s.addIncident);
   const addChatMessage = useMapStore((s) => s.addChatMessage);
   const upsertPendingMarker = useMapStore((s) => s.upsertPendingMarker);
   const removePendingMarker = useMapStore((s) => s.removePendingMarker);
+  const setTelemetry = useMapStore((s) => s.setTelemetry);
 
   const addIncidentChatMessage = useChatStore((s) => s.addMessage);
 
@@ -34,8 +36,22 @@ export default function useWebSocket({
 
         if (!eventName) return;
 
+        if (eventName === 'AGENT_LOCATION_UPDATE') {
+          if (Array.isArray(data)) {
+            data.forEach((item) => updateAgentLocation(item));
+          } else {
+            updateAgentLocation(data);
+          }
+          return;
+        }
+
         if (eventName === 'telemetry_update' || eventName === 'duty_location_update') {
           updateAgent(data);
+          return;
+        }
+
+        if (eventName === 'SYS_TELEMETRY') {
+          setTelemetry(data);
           return;
         }
 
@@ -88,5 +104,5 @@ export default function useWebSocket({
     return () => {
       if (socket && typeof socket.close === 'function') socket.close();
     };
-  }, [url, wsFactory, updateAgent, addIncident, addChatMessage, upsertPendingMarker, removePendingMarker, addIncidentChatMessage]);
+  }, [url, wsFactory, updateAgent, updateAgentLocation, addIncident, addChatMessage, upsertPendingMarker, removePendingMarker, setTelemetry, addIncidentChatMessage]);
 }

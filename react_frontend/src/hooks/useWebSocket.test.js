@@ -50,6 +50,20 @@ describe('useWebSocket', () => {
 
       socket.onmessage({
         data: JSON.stringify({
+          event: 'SYS_TELEMETRY',
+          data: { cpu_load: 91.2, ram_usage: 67.4, active_nodes: 321, net_traffic: '512 MB/s', hex_dump: 'A1B2C3D4E5F60718293A4B5C' },
+        }),
+      });
+
+      socket.onmessage({
+        data: JSON.stringify({
+          event: 'AGENT_LOCATION_UPDATE',
+          data: { agent_id: 'u-2', lat: 54.01, lon: 27.51, heading: 101 },
+        }),
+      });
+
+      socket.onmessage({
+        data: JSON.stringify({
           event: 'pending_created',
           data: { id: 101, lat: 53.9, lon: 27.56, category: 'Охрана', status: 'pending' },
         }),
@@ -113,6 +127,8 @@ describe('useWebSocket', () => {
 
     const state = useMapStore.getState();
     expect(state.agents['u-1']).toEqual(expect.objectContaining({ lat: 53.95, lon: 27.59, heading: 80 }));
+    expect(state.agents['u-2']).toEqual(expect.objectContaining({ lat: 54.01, lon: 27.51, heading: 101 }));
+    expect(state.telemetry).toEqual(expect.objectContaining({ cpu_load: 91.2, active_nodes: 321, net_traffic: '512 MB/s' }));
     expect(state.pendingMarkers).toEqual([]);
     expect(state.incidents).toEqual([
       expect.objectContaining({ id: 202, category: 'fire' }),

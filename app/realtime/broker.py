@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import random
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -23,6 +25,9 @@ except Exception:  # pragma: no cover
 
 DEFAULT_CHANNEL = "map_updates"
 DEFAULT_TELEMETRY_QUEUE = "telemetry_save_queue"
+MATRIX_NOISE_CHANNEL = "realtime_events"
+
+logger = logging.getLogger(__name__)
 
 
 def get_redis_url() -> str:
@@ -198,6 +203,33 @@ async def subscribe_forever(
             await on_event(event, data)
 
     await broker.listener(channel, _on_payload)
+
+
+async def matrix_telemetry_stream(
+    redis_client: Any,
+    *,
+    channel: str = MATRIX_NOISE_CHANNEL,
+) -> None:
+    """Background generator of synthetic cyber telemetry for frontend HUD."""
+    logger.info("Запуск потока системной телеметрии [MATRIX_NOISE]...")
+    try:
+        while True:
+            payload = {
+                "event": "SYS_TELEMETRY",
+                "data": {
+                    "cpu_load": round(random.uniform(12.0, 98.9), 1),
+                    "ram_usage": round(random.uniform(45.0, 88.5), 1),
+                    "active_nodes": random.randint(120, 500),
+                    "net_traffic": f"{random.randint(10, 999)} MB/s",
+                    "hex_dump": "".join(random.choices("0123456789ABCDEF", k=24)),
+                },
+            }
+            await redis_client.publish(channel, json.dumps(payload, ensure_ascii=False))
+            await asyncio.sleep(random.uniform(0.3, 1.5))
+    except asyncio.CancelledError:
+        logger.info("Поток телеметрии остановлен.")
+        raise
+
 
 
 def flush_telemetry_batch(points: list[Dict[str, Any]]) -> int:

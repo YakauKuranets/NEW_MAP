@@ -2,6 +2,7 @@ import { create } from '../vendor/zustand';
 
 const initialState = {
   agents: {},
+  trackPoints: {},
   incidents: [],
   pendingMarkers: [],
   selectedObject: null,
@@ -12,6 +13,13 @@ const initialState = {
   activeMarkerId: null,
   activePendingMarkerId: null,
   draftMarker: null,
+  telemetry: {
+    cpu_load: 0,
+    ram_usage: 0,
+    active_nodes: 0,
+    net_traffic: '0 MB/s',
+    hex_dump: '000000000000000000000000',
+  },
 };
 
 const getEntityId = (item) => item?.id ?? item?.incident_id ?? item?.pending ?? item?.pending_id;
@@ -25,8 +33,50 @@ const getViolationFlag = (data, fallback) => {
   return false;
 };
 
-const useMapStore = create((set) => ({
+const useMapStore = create((set, get) => ({
   ...initialState,
+
+
+
+  updateAgentLocation: (payload) => set((state) => {
+    const rawId = payload?.agent_id ?? payload?.id ?? payload?.user_id;
+    const lat = Number(payload?.lat ?? payload?.latitude);
+    const lon = Number(payload?.lon ?? payload?.longitude);
+
+    if (rawId === undefined || rawId === null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return state;
+    }
+
+    const agentId = String(rawId);
+    const newCoord = [lon, lat];
+
+    const currentAgent = state.agents[agentId] || { id: agentId, agent_id: agentId };
+    const updatedAgents = {
+      ...state.agents,
+      [agentId]: {
+        ...currentAgent,
+        ...payload,
+        id: currentAgent.id ?? agentId,
+        agent_id: agentId,
+        lon,
+        lat,
+        coordinates: newCoord,
+        last_seen: Date.now(),
+      },
+    };
+
+    const currentTrack = state.trackPoints[agentId]?.path || [];
+    const updatedPath = [...currentTrack, newCoord].slice(-50);
+    const updatedTracks = {
+      ...state.trackPoints,
+      [agentId]: { id: agentId, agent_id: agentId, path: updatedPath },
+    };
+
+    return {
+      agents: updatedAgents,
+      trackPoints: updatedTracks,
+    };
+  }),
 
   updateAgent: (data) => set((state) => {
     const rawId = data?.agent_id ?? data?.id ?? data?.user_id;
@@ -117,6 +167,10 @@ const useMapStore = create((set) => ({
 
   setSelectedObject: (selectedObject) => set({ selectedObject }),
 
+  setTelemetry: (data) => set((state) => ({
+    telemetry: { ...state.telemetry, ...(data || {}) },
+  })),
+
   // compatibility with older components
   upsertTrackerPosition: (trackerId, payload) => set((state) => ({
     trackers: {
@@ -153,6 +207,9 @@ const useMapStore = create((set) => ({
   })),
 
   setActiveMarker: (id) => set({ activeMarkerId: id, draftMarker: null }),
+
+  getAgentsArray: () => Object.values(get().agents),
+  getTracksArray: () => Object.values(get().trackPoints),
 
   reset: () => set({ ...initialState }),
 }));

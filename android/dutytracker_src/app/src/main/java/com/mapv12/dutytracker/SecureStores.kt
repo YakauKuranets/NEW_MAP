@@ -1,29 +1,30 @@
 package com.mapv12.dutytracker
 
 import android.content.Context
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import android.util.Base64
 
 object SecureStores {
     private const val PREF_SECURE = "dutytracker_secure"
     private const val KEY_DEVICE_TOKEN = "device_token"
 
-    private fun securePrefs(ctx: Context) = try {
-        val masterKey = MasterKey.Builder(ctx)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
+    private const val KEY_DB_PASSPHRASE = "db_passphrase"
+    private const val KEY_AUDIT_API_KEY = "audit_api_key"
+    private const val KEY_WS_TOKEN = "ws_token"
 
-        EncryptedSharedPreferences.create(
-            ctx,
-            PREF_SECURE,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-    } catch (e: Exception) {
-        // Worst case fallback (should not happen on normal devices)
-        ctx.getSharedPreferences(PREF_SECURE, Context.MODE_PRIVATE)
+    fun getOrCreateDbPassphrase(ctx: Context): String {
+        securePrefs(ctx).getString(KEY_DB_PASSPHRASE, null)?.let { existing ->
+            if (existing.isNotBlank()) return existing
+        }
+
+        val bytes = ByteArray(32)
+        java.security.SecureRandom().nextBytes(bytes)
+        val generated = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        securePrefs(ctx).edit().putString(KEY_DB_PASSPHRASE, generated).apply()
+        bytes.fill(0)
+        return generated
     }
+
+    private fun securePrefs(ctx: Context) = SecurePrefs.getInstance(ctx)
 
     fun getDeviceToken(ctx: Context): String? {
         return securePrefs(ctx).getString(KEY_DEVICE_TOKEN, null)
@@ -34,7 +35,28 @@ object SecureStores {
         if (token.isNullOrBlank()) ed.remove(KEY_DEVICE_TOKEN) else ed.putString(KEY_DEVICE_TOKEN, token)
         ed.apply()
     }
+
+    fun getAuditApiKey(ctx: Context): String? {
+        return securePrefs(ctx).getString(KEY_AUDIT_API_KEY, null)
+    }
+
+    fun setAuditApiKey(ctx: Context, apiKey: String?) {
+        val ed = securePrefs(ctx).edit()
+        if (apiKey.isNullOrBlank()) ed.remove(KEY_AUDIT_API_KEY) else ed.putString(KEY_AUDIT_API_KEY, apiKey)
+        ed.apply()
+    }
+
+    fun getWsToken(ctx: Context): String? {
+        return securePrefs(ctx).getString(KEY_WS_TOKEN, null)
+    }
+
+    fun setWsToken(ctx: Context, token: String?) {
+        val ed = securePrefs(ctx).edit()
+        if (token.isNullOrBlank()) ed.remove(KEY_WS_TOKEN) else ed.putString(KEY_WS_TOKEN, token)
+        ed.apply()
+    }
 }
+
 
 object SessionStore {
     private const val PREF = "dutytracker_session"

@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+from datetime import timedelta
+from flask import current_app
 
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
@@ -32,3 +34,19 @@ def verify_token(secret_key: str, token: str, *, max_age: int) -> Optional[Dict[
         return data if isinstance(data, dict) else None
     except (BadSignature, SignatureExpired):
         return None
+
+
+def generate_websocket_token(payload: Dict[str, Any], *, expires_delta: Optional[timedelta] = None) -> str:
+    """Generate token for WS clients using app secret."""
+    secret = current_app.config.get("JWT_SECRET_KEY") or current_app.secret_key
+    data = dict(payload or {})
+    if expires_delta is not None:
+        data["exp_seconds"] = int(expires_delta.total_seconds())
+    return issue_token(secret, data)
+
+
+def verify_websocket_token(token: str, *, max_age: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Verify websocket token against app secret/current config."""
+    secret = current_app.config.get("JWT_SECRET_KEY") or current_app.secret_key
+    ttl = int(max_age or current_app.config.get("REALTIME_TOKEN_TTL_SEC", 3600))
+    return verify_token(secret, token, max_age=ttl)

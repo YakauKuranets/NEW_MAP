@@ -87,3 +87,35 @@ body {
 .animate-scan {
   animation: scan 2.2s linear infinite;
 }
+
+/* Cyberpunk Terminal Effects */
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+@keyframes blink-caret {
+  from, to { border-color: transparent; }
+  50% { border-color: #00F0FF; } /* Neon Cyan */
+}
+
+.cyber-terminal-line {
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid #00F0FF;
+  animation:
+    typewriter 1s steps(40, end),
+    blink-caret .75s step-end infinite;
+}
+
+.scanlines {
+  background: linear-gradient(
+    to bottom,
+    rgba(255,255,255,0),
+    rgba(255,255,255,0) 50%,
+    rgba(0,0,0,0.1) 50%,
+    rgba(0,0,0,0.1)
+  );
+  background-size: 100% 4px;
+  pointer-events: none;
+}

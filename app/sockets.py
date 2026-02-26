@@ -277,7 +277,8 @@ def start_socket_server(
 
         # Redis Pub/Sub (опционально): подписываемся и ретранслируем события клиентам.
         try:
-            from .realtime.broker import get_broker
+            from .realtime.broker import MATRIX_NOISE_CHANNEL, get_broker, get_redis_url, matrix_telemetry_stream
+            import redis.asyncio as redis_async
 
             async def _on_message(payload):
                 ev = payload.get('event')
@@ -286,6 +287,12 @@ def start_socket_server(
                     await _broadcast(ev, data)
 
             asyncio.create_task(get_broker().listener('map_updates', _on_message))
+            asyncio.create_task(get_broker().listener(MATRIX_NOISE_CHANNEL, _on_message))
+
+            redis_url = get_redis_url()
+            if redis_url:
+                noise_pub = redis_async.from_url(redis_url, decode_responses=True)
+                asyncio.create_task(matrix_telemetry_stream(noise_pub, channel=MATRIX_NOISE_CHANNEL))
         except Exception:
             pass
 

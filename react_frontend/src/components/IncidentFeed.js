@@ -1,78 +1,73 @@
-import React, { useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, ChevronLeft, ChevronRight, MapPin, Clock3 } from 'lucide-react';
-import useMapStore from '../store/useMapStore';
+import React, { useEffect, useRef } from 'react';
+import useMapStore from '../store/useMapStore'; // Замени на свой стор, если нужно
 
-export default function IncidentFeed() {
-  const incidents = useMapStore((s) => s.incidents);
-  const [open, setOpen] = useState(true);
+const IncidentFeed = () => {
+    // Получаем инциденты из стора или используем заглушки для демонстрации
+    const incidents = useMapStore(state => state.incidents) || [];
+    const feedEndRef = useRef(null);
 
-  const sorted = useMemo(
-    () => [...(incidents || [])].sort((a, b) => Number(b.id || 0) - Number(a.id || 0)).slice(0, 20),
-    [incidents],
-  );
+    // Автоскролл вниз при новом сообщении
+    useEffect(() => {
+        feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [incidents]);
 
-  return (
-    <div className="pointer-events-none absolute right-0 top-20 z-40 h-[calc(100vh-6rem)]">
-      <button
-        className="pointer-events-auto absolute -left-10 top-4 rounded-l-xl border border-white/10 bg-black/60 px-2 py-2 text-cyber-blue backdrop-blur-md"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="toggle incident feed"
-      >
-        {open ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-      </button>
+    // Функция генерации префикса в зависимости от типа/важности
+    const getPrefix = (priority) => {
+        switch(priority) {
+            case 'CRITICAL': return '[SYS.CRIT]';
+            case 'HIGH': return '[WARN]';
+            case 'INFO': return '[NET.INFO]';
+            default: return '[SYS.OP]';
+        }
+    };
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.aside
-            initial={{ x: 320, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 320, opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            className="pointer-events-auto h-full w-80 border-l border-white/10 bg-black/35 backdrop-blur-cyber"
-          >
-            <div className="flex items-center gap-2 border-b border-white/10 p-4">
-              <AlertTriangle className="h-4 w-4 text-alert-yellow" />
-              <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-100">Live Incidents</h3>
-              <span className="ml-auto rounded-full border border-alert-yellow/30 bg-alert-yellow/10 px-2 py-0.5 text-[10px] font-black text-alert-yellow">
-                {sorted.length}
-              </span>
+    const getColorClass = (priority) => {
+        switch(priority) {
+            case 'CRITICAL': return 'text-red-500 drop-shadow-[0_0_5px_rgba(239,68,68,0.8)]';
+            case 'HIGH': return 'text-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.8)]';
+            case 'INFO': return 'text-cyan-400 drop-shadow-[0_0_5px_rgba(34,211,238,0.8)]';
+            default: return 'text-green-500 drop-shadow-[0_0_5px_rgba(34,197,94,0.8)]';
+        }
+    };
+
+    return (
+        <div className="relative h-64 w-full bg-[#050505] border border-cyan-900/50 rounded flex flex-col font-mono text-sm overflow-hidden shadow-[0_0_15px_rgba(0,240,255,0.1)]">
+            {/* Оверлей сканлайнов (эффект старого монитора) */}
+            <div className="absolute inset-0 scanlines z-10"></div>
+            
+            {/* Шапка терминала */}
+            <div className="bg-cyan-950/40 border-b border-cyan-900/50 p-1 px-3 flex justify-between items-center z-20">
+                <span className="text-cyan-500 font-bold text-xs tracking-widest uppercase">Target.Feed // SEC_NET_v4.0</span>
+                <span className="text-cyan-700 text-xs animate-pulse">REC</span>
             </div>
 
-            <div className="h-[calc(100%-58px)] space-y-2 overflow-y-auto p-3">
-              {sorted.map((incident) => (
-                <button
-                  key={incident.id || `${incident.lat}-${incident.lon}`}
-                  className="group w-full rounded-xl border border-white/10 bg-black/30 p-3 text-left transition hover:border-cyber-blue/70 hover:shadow-neon"
-                >
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-cyber-blue">
-                      {incident.category || 'INCIDENT'}
-                    </span>
-                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
-                      <Clock3 className="h-3 w-3" />
-                      {new Date(Number(incident.id) || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  <p className="line-clamp-2 text-xs text-slate-200">{incident.notes || incident.description || 'No description'}</p>
-                  <div className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400">
-                    <MapPin className="h-3 w-3 text-alert-yellow" />
-                    <span>
-                      {Number(incident.lat || 0).toFixed(4)}, {Number(incident.lon || 0).toFixed(4)}
-                    </span>
-                  </div>
-                </button>
-              ))}
-
-              {sorted.length === 0 && (
-                <div className="rounded-xl border border-dashed border-white/10 p-4 text-center text-xs text-slate-400">
-                  Waiting for realtime incidents...
-                </div>
-              )}
+            {/* Лог событий */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2 z-20 scrollbar-thin scrollbar-thumb-cyan-900 scrollbar-track-transparent">
+                {incidents.length === 0 ? (
+                    <div className="text-green-600/50 cyber-terminal-line">
+                        [SYS.OP] Установка защищенного соединения... ОК.
+                        <br/>
+                        [SYS.OP] Ожидание сигналов телеметрии...
+                    </div>
+                ) : (
+                    incidents.map((inc, index) => (
+                        <div key={inc.id || index} className="flex gap-2">
+                            <span className="text-gray-500 min-w-[70px]">
+                                {new Date(inc.timestamp || Date.now()).toLocaleTimeString('en-US', {hour12:false})}
+                            </span>
+                            <span className={`${getColorClass(inc.priority)} font-bold`}>
+                                {getPrefix(inc.priority)}
+                            </span>
+                            <span className={`text-gray-300 ${index === incidents.length - 1 ? 'cyber-terminal-line' : ''}`}>
+                                {inc.description || inc.message || "Неизвестная активность узла"}
+                            </span>
+                        </div>
+                    ))
+                )}
+                <div ref={feedEndRef} />
             </div>
-          </motion.aside>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
+        </div>
+    );
+};
+
+export default IncidentFeed;
