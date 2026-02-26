@@ -11,7 +11,7 @@ data class CameraEntity(
     val vendor: String?,
     val model: String?,
     val onvifUrl: String?,
-    val authType: String? = null, // "basic", "digest", etc.
+    val authType: String? = null,
     val firstSeen: Long = System.currentTimeMillis(),
     val lastSeen: Long = System.currentTimeMillis(),
     val isOnline: Boolean = true
