@@ -22,10 +22,14 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import models
 from . import bp
+from app.extensions import db
+from app.auth.decorators import jwt_or_api_required, require_audit_auth
 
 # ===== ДОБАВЛЕННЫЕ ИМПОРТЫ ДЛЯ АУДИТА =====
 import uuid
-from celery_worker import run_audit_task
+from datetime import datetime, timedelta
+from celery_worker import run_audit_task, run_wifi_audit_task
+from app.realtime.tokens import generate_websocket_token
 # ===== КОНЕЦ ДОБАВЛЕННЫХ ИМПОРТОВ =====
 
 
@@ -399,6 +403,7 @@ def video_archive_stream():
 
 # ===== НОВЫЕ ЭНДПОИНТЫ ДЛЯ АУДИТА БЕЗОПАСНОСТИ =====
 @bp.post("/audit/start")
+@jwt_or_api_required
 def start_audit():
     """Запускает аудит безопасности для указанной камеры."""
     data = request.get_json()
@@ -440,6 +445,7 @@ def start_audit():
 
 
 @bp.get("/audit/result/<task_id>")
+@jwt_or_api_required
 def get_audit_result(task_id):
     """Возвращает результат аудита по ID задачи."""
     result = models.CameraAuditResult.query.filter(
@@ -456,3 +462,151 @@ def get_audit_result(task_id):
         "details": result.details
     })
 # ===== КОНЕЦ НОВЫХ ЭНДПОИНТОВ =====
+
+
+@bp.post("/wifi/audit/start")
+@require_audit_auth
+def start_wifi_audit():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No JSON payload"}), 400
+
+    bssid = data.get("bssid")
+    essid = data.get("essid") or data.get("ssid")
+    security_type = data.get("securityType")
+    client_id = data.get("clientId")
+    region = (data.get("region") or "ru").lower()
+
+    if not bssid or not essid:
+        return jsonify({"error": "bssid and essid required"}), 400
+
+    # Кэширование: если для той же сети есть свежий completed результат — переиспользуем.
+    fresh_cutoff = datetime.utcnow() - timedelta(hours=24)
+    cached = (
+        models.WifiAuditResult.query
+        .filter(models.WifiAuditResult.bssid == bssid)
+        .filter(models.WifiAuditResult.security_type == security_type)
+        .filter(models.WifiAuditResult.updated_at.isnot(None))
+        .filter(models.WifiAuditResult.updated_at >= fresh_cutoff)
+        .order_by(models.WifiAuditResult.updated_at.desc())
+        .first()
+    )
+    if cached and isinstance(cached.details, dict) and cached.details.get("status") == "completed":
+        return jsonify({
+            "taskId": cached.task_id,
+            "status": "cached",
+            "estimatedTime": int(cached.estimated_time_seconds or 0),
+        }), 200
+
+    task_id = str(uuid.uuid4())
+
+    result = models.WifiAuditResult(
+        task_id=task_id,
+        client_id=client_id,
+        bssid=bssid,
+        essid=essid,
+        security_type=security_type,
+        is_vulnerable=False,
+        estimated_time_seconds=300,
+        progress=0,
+        details={
+            "status": "pending",
+            "message": "Задача поставлена в очередь",
+            "estimatedTime": 300,
+            "progress": 0,
+            "region": region,
+        },
+    )
+    db.session.add(result)
+    db.session.commit()
+
+    run_wifi_audit_task.delay(
+        task_id=task_id,
+        bssid=bssid,
+        essid=essid,
+        security_type=security_type,
+        region=region,
+    )
+
+    ws_channel = f"wifi_audit:{task_id}"
+    ws_token = generate_websocket_token({"task_id": task_id, "channel": ws_channel}, expires_delta=timedelta(hours=1))
+
+    return jsonify({
+        "taskId": task_id,
+        "status": "started",
+        "estimatedTime": 300,
+        "wsToken": ws_token,
+        "wsChannel": ws_channel,
+    }), 202
+
+
+@bp.get("/wifi/audit/result/<task_id>")
+@require_audit_auth
+def get_wifi_audit_result(task_id):
+    result = models.WifiAuditResult.query.filter_by(task_id=task_id).first()
+    if not result:
+        return jsonify({"error": "Task not found"}), 404
+
+    details = result.details or {}
+    return jsonify({
+        "bssid": result.bssid,
+        "essid": result.essid,
+        "isVulnerable": bool(result.is_vulnerable),
+        "vulnerabilityType": result.vulnerability_type,
+        "foundPassword": result.found_password,
+        "message": details.get("message", ""),
+        "status": details.get("status", "completed"),
+        "progress": int(result.progress or details.get("progress", 0)),
+        "estimatedTime": int(result.estimated_time_seconds or details.get("estimatedTime", 0)),
+    })
+
+
+@bp.get("/wifi/audit/status/<task_id>")
+@require_audit_auth
+def get_wifi_audit_status(task_id):
+    result = models.WifiAuditResult.query.filter_by(task_id=task_id).first()
+    if not result:
+        return jsonify({"error": "Task not found"}), 404
+
+    details = result.details or {}
+    status = details.get("status", "pending")
+    return jsonify({
+        "taskId": result.task_id,
+        "status": status,
+        "progress": int(result.progress or details.get("progress", 0)),
+        "estimatedTime": int(result.estimated_time_seconds or details.get("estimatedTime", 0)),
+        "isVulnerable": bool(result.is_vulnerable),
+        "vulnerabilityType": result.vulnerability_type,
+        "foundPassword": result.found_password,
+        "message": details.get("message", ""),
+    })
+
+
+@bp.get("/osint/cameras")
+@jwt_or_api_required
+def list_global_cameras():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    country = request.args.get('country')
+    vendor = request.args.get('vendor')
+
+    query = models.GlobalCamera.query
+    if country:
+        query = query.filter_by(country=country)
+    if vendor:
+        query = query.filter_by(vendor=vendor)
+
+    cameras = query.paginate(page=page, per_page=per_page)
+    return jsonify({
+        'items': [{
+            'ip': c.ip,
+            'port': c.port,
+            'vendor': c.vendor,
+            'model': c.model,
+            'country': c.country,
+            'city': c.city,
+            'org': c.org,
+        } for c in cameras.items],
+        'total': cameras.total,
+        'page': page,
+    })

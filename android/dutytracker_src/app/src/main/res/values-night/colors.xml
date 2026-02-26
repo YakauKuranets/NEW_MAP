@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Night mode: Phantom tactical palette -->
-    <color name="md_primary">#1A56DB</color>
+    <color name="md_primary">#00F0FF</color>
     <color name="md_on_primary">#FFFFFF</color>
     <color name="md_primary_container">#0E2E73</color>
     <color name="md_on_primary_container">#D6E4FF</color>
@@ -21,7 +21,7 @@
     <color name="md_error_container">#600018</color>
     <color name="md_on_error_container">#FFD7E0</color>
 
-    <color name="md_background">#000000</color>
+    <color name="md_background">#050505</color>
     <color name="md_on_background">#E1E2F0</color>
     <color name="md_surface">#000000</color>
     <color name="md_on_surface">#E1E2F0</color>

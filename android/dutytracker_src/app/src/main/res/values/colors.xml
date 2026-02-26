@@ -2,7 +2,7 @@
 <resources>
     <!-- ── Material 3 Baseline — Navy / Operational Blue theme ── -->
     <!-- Primary: Тёмно-синий (командный) -->
-    <color name="md_primary">#1A56DB</color>
+    <color name="md_primary">#00F0FF</color>
     <color name="md_on_primary">#FFFFFF</color>
     <color name="md_primary_container">#D6E4FF</color>
     <color name="md_on_primary_container">#001C56</color>
@@ -27,7 +27,7 @@
     <color name="sos_red">#FF003C</color>
 
     <!-- Background / Surface — light -->
-    <color name="md_background">#000000</color>
+    <color name="md_background">#050505</color>
     <color name="md_on_background">#191C25</color>
     <color name="md_surface">#000000</color>
     <color name="md_on_surface">#191C25</color>

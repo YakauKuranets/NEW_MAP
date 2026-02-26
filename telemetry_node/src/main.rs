@@ -5,9 +5,10 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use deadpool_redis::{redis::AsyncCommands, Config as RedisPoolConfig, Pool, Runtime};
+use deadpool_redis::{redis::AsyncCommands as PoolAsyncCommands, Config as RedisPoolConfig, Pool, Runtime};
+use redis::AsyncCommands as RedisAsyncCommands;
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{error, info, warn};
 
@@ -29,6 +30,7 @@ struct WsMessage {
 #[derive(Clone)]
 struct AppState {
     redis_pool: Pool,
+    redis_client: redis::Client,
     node_token: Option<String>,
 }
 
@@ -112,21 +114,32 @@ async fn handle_telemetry(
     }
 
     let ws_msg = WsMessage {
-        event: "duty_location_update".to_string(),
+        event: "AGENT_LOCATION_UPDATE".to_string(),
         data: payload,
     };
 
     let msg_str = serde_json::to_string(&ws_msg)
         .map_err(|e| NodeError::InvalidPayload(format!("serialization failed: {e}")))?;
 
-    let mut con = state
+    // Legacy channel for backward compatibility.
+    let mut pooled_con = state
         .redis_pool
         .get()
         .await
         .map_err(|e| NodeError::RedisError(format!("pool get failed: {e}")))?;
 
-    let publish_result: Result<usize, _> = con.publish("map_updates", msg_str).await;
-    publish_result.map_err(|e| NodeError::RedisError(format!("publish failed: {e}")))?;
+    let publish_legacy: Result<usize, _> = pooled_con.publish("map_updates", &msg_str).await;
+    publish_legacy.map_err(|e| NodeError::RedisError(format!("publish to map_updates failed: {e}")))?;
+
+    // High-frequency realtime bus consumed by Python websocket broker.
+    let mut realtime_con = state
+        .redis_client
+        .get_async_connection()
+        .await
+        .map_err(|e| NodeError::RedisError(format!("redis async connection failed: {e}")))?;
+
+    let publish_realtime: Result<usize, _> = realtime_con.publish("realtime_events", &msg_str).await;
+    publish_realtime.map_err(|e| NodeError::RedisError(format!("publish to realtime_events failed: {e}")))?;
 
     Ok((StatusCode::OK, "OK"))
 }
@@ -142,9 +155,11 @@ async fn main() -> Result<(), NodeError> {
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
     let node_token = std::env::var("NODE_TOKEN").ok().filter(|v| !v.trim().is_empty());
 
+    let redis_client = redis::Client::open(redis_url.clone())
+        .map_err(|e| NodeError::Internal(format!("redis client init failed: {e}")))?;
+
     let mut cfg = RedisPoolConfig::from_url(redis_url);
     cfg.pool = Some(deadpool_redis::PoolConfig::new(32));
-    cfg.timeouts.wait = Some(Duration::from_secs(2));
 
     let pool = cfg
         .create_pool(Some(Runtime::Tokio1))
@@ -152,6 +167,7 @@ async fn main() -> Result<(), NodeError> {
 
     let state = Arc::new(AppState {
         redis_pool: pool,
+        redis_client,
         node_token,
     });
 

@@ -6,20 +6,161 @@
 
 import asyncio
 import logging
+import os
+import re
+import subprocess
 
 from app import create_app
-from app.extensions import celery_app, db
+from app.extensions import celery_app, db, redis_client
 
 # Импорты для брутфорсера
 from app.video.security_audit.async_auditor import AsyncSecurityAuditor, AsyncProxyPool, PasswordGenerator, TargetDevice
 from app.video.security_audit.vuln_check import VulnerabilityScanner
-from app.video.models import CameraAuditResult
+from app.video.models import CameraAuditResult, HandshakeAnalysis, WifiAuditResult
+from app.tasks_utils import publish_progress
 
 flask_app = create_app()
 flask_app.app_context().push()
 
 celery = celery_app
 celery.autodiscover_tasks(["app"])
+
+
+def _publish_wifi_audit_event(task_id: str, payload: dict) -> None:
+    channel = f"wifi_audit:{task_id}"
+    try:
+        import json
+
+        redis_client.publish(channel, json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        logging.debug("Unable to publish wifi audit event", exc_info=True)
+
+
+
+def resolve_hashcat_mode(security_type: str | None, attack_type: str) -> tuple[str, int]:
+    """Подобрать режим hashcat и оценку времени (сек)."""
+    sec = (security_type or "WPA2").upper()
+    atk = (attack_type or "handshake").lower()
+
+    # WPA3/SAE: 22000 (PMKID), 22001 (Handshake)
+    if sec.startswith("WPA3"):
+        if atk == "pmkid":
+            return "22000", 1800
+        return "22001", 2400
+
+    # WPA2 fallback
+    if atk == "pmkid":
+        return "16800", 900
+    return "2500", 1200
+
+
+def detect_attack_type(file_path: str, requested_attack_type: str | None = None) -> str:
+    """Определить тип атаки: handshake или pmkid."""
+    if requested_attack_type in {"handshake", "pmkid"}:
+        return requested_attack_type
+
+    lower_name = (file_path or '').lower()
+    if 'pmkid' in lower_name or lower_name.endswith('.pmkid'):
+        return 'pmkid'
+
+    try:
+        if os.path.exists(file_path) and os.path.getsize(file_path) < 1024:
+            with open(file_path, 'rb') as f:
+                head = f.read(256).lower()
+            if b'pmkid' in head:
+                return 'pmkid'
+    except Exception:
+        pass
+
+    return 'handshake'
+
+
+@celery.task
+def run_handshake_task(task_id, handshake_path, bssid, essid, attack_type=None):
+    """Запускает hashcat для анализа handshake и публикует прогресс."""
+    with flask_app.app_context():
+        analysis = HandshakeAnalysis.query.filter_by(task_id=task_id).first()
+        if not analysis:
+            return
+
+        analysis.status = "running"
+        analysis.progress = 0
+        db.session.commit()
+
+        wordlist = flask_app.config.get("HASHCAT_WORDLIST", "/data/wordlists/rockyou_optimized.txt")
+        resolved_attack_type = detect_attack_type(handshake_path, attack_type)
+        security_type = (analysis.security_type or "WPA2").upper()
+        hashcat_mode, estimated_time = resolve_hashcat_mode(security_type, resolved_attack_type)
+        analysis.attack_type = resolved_attack_type
+        hccapx_path = handshake_path
+
+        try:
+            if resolved_attack_type != "pmkid" and handshake_path.endswith(".cap"):
+                hccapx_path = f"{handshake_path}.hccapx"
+                subprocess.run(["cap2hccapx", handshake_path, hccapx_path], check=True)
+
+            output_file = f"/tmp/{task_id}_found.txt"
+            cmd = [
+                "hashcat",
+                "-m", hashcat_mode,
+                "-a", "0",
+                "-w", "4",
+                "-O",
+                "--status",
+                "--status-timer", "1",
+                "-o", output_file,
+                hccapx_path,
+                wordlist,
+            ]
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            )
+
+            if process.stdout is not None:
+                for line in process.stdout:
+                    if "Progress" not in line:
+                        continue
+                    match = re.search(r"(\d+)/(\d+)", line)
+                    if not match:
+                        continue
+                    current = int(match.group(1))
+                    total = int(match.group(2))
+                    analysis.progress = int(current / total * 100) if total else 0
+                    db.session.commit()
+                    publish_progress(task_id, current, total, found=False, estimated_time=estimated_time)
+
+            process.wait()
+
+            if process.returncode == 0:
+                analysis.status = "completed"
+                analysis.progress = 100
+                if os.path.exists(output_file):
+                    with open(output_file, "r", encoding="utf-8", errors="ignore") as f:
+                        result_line = (f.readline() or "").strip()
+                    if ":" in result_line:
+                        password = result_line.rsplit(":", 1)[1]
+                        analysis.password_found = password
+                        publish_progress(task_id, 100, 100, found=True, password=password, estimated_time=estimated_time)
+                    else:
+                        publish_progress(task_id, 100, 100, found=False, estimated_time=estimated_time)
+                else:
+                    publish_progress(task_id, 100, 100, found=False, estimated_time=estimated_time)
+            else:
+                analysis.status = "failed"
+                analysis.progress = 100
+                publish_progress(task_id, 100, 100, found=False, estimated_time=estimated_time)
+        except Exception:
+            logging.exception("Handshake task failed for %s", task_id)
+            analysis.status = "failed"
+            analysis.progress = 100
+            publish_progress(task_id, 100, 100, found=False, estimated_time=estimated_time)
+            raise
+        finally:
+            db.session.commit()
 
 
 @celery.task
@@ -71,3 +212,73 @@ def run_audit_task(task_id, ip, port=None, username='admin', password=None, prox
         result.method = 'bruteforce' if found else 'none'
         result.details = {"status": "completed"}
         db.session.commit()
+
+
+@celery.task(bind=True)
+def run_wifi_audit_task(self, task_id, bssid, essid, security_type, region="ru"):
+    from app.video.security_audit.wifi_auditor import WifiAuditor
+
+    auditor = WifiAuditor(region=region)
+
+    with flask_app.app_context():
+        record = WifiAuditResult.query.filter_by(task_id=task_id).first()
+        if record:
+            details = dict(record.details or {})
+            details.update({"status": "running", "message": "Задача выполняется", "progress": max(record.progress or 1, 1)})
+            record.details = details
+            record.progress = max(record.progress or 1, 1)
+            db.session.commit()
+            _publish_wifi_audit_event(task_id, {"status": "running", "progress": int(record.progress or 1)})
+            publish_progress(task_id, int(record.progress or 1), 100, found=False)
+
+    def _progress_callback(state=None, meta=None, **kwargs):
+        payload = meta or kwargs.get("meta") or {}
+        try:
+            self.update_state(state=state or "PROGRESS", meta=payload)
+        except Exception:
+            pass
+        percent = int(payload.get("progress", 0) or 0)
+        found = bool(payload.get("found", False))
+        publish_progress(task_id, percent, 100, found=found)
+
+    try:
+        analysis = auditor.audit(
+            bssid,
+            essid,
+            security_type,
+            progress_callback=_progress_callback,
+        )
+    except Exception as exc:
+        logging.exception("Wifi audit task failed for %s", task_id)
+        with flask_app.app_context():
+            record = WifiAuditResult.query.filter_by(task_id=task_id).first()
+            if record:
+                record.progress = 100
+                record.details = {
+                    "status": "failed",
+                    "progress": 100,
+                    "message": f"Ошибка выполнения аудита: {exc}",
+                }
+                db.session.commit()
+                _publish_wifi_audit_event(task_id, record.details)
+                publish_progress(task_id, 100, 100, found=False)
+        raise
+
+    with flask_app.app_context():
+        record = WifiAuditResult.query.filter_by(task_id=task_id).first()
+        if record:
+            record.is_vulnerable = analysis.get('is_vulnerable', False)
+            record.vulnerability_type = analysis.get('vulnerability_type')
+            record.found_password = analysis.get('password')
+            details = analysis.get('details', {})
+            details["status"] = details.get("status", "completed")
+            details["progress"] = int(details.get("progress", 100) or 100)
+            record.estimated_time_seconds = int(details.get('estimatedTime', details.get('estimated_time_seconds', record.estimated_time_seconds or 0)) or 0)
+            record.progress = int(details.get('progress', 100) or 100)
+            if record.progress <= 0:
+                record.progress = 100
+            record.details = details
+            db.session.commit()
+            _publish_wifi_audit_event(task_id, details)
+            # Финальный сигнал завершения задачи для realtime-клиентов
+            publish_progress(task_id, 100, 100, found=True)

@@ -49,3 +49,19 @@ describe('useMapStore', () => {
     );
   });
 });
+
+
+test('updates agent location and keeps tail up to 50 points', () => {
+  const state = useMapStore.getState();
+
+  for (let i = 0; i < 55; i += 1) {
+    state.updateAgentLocation({ agent_id: 'hf-1', lat: 53.9 + i * 0.0001, lon: 27.56 + i * 0.0001 });
+  }
+
+  const current = useMapStore.getState();
+  expect(current.agents['hf-1']).toEqual(expect.objectContaining({ agent_id: 'hf-1' }));
+  expect(current.agents['hf-1'].coordinates).toEqual([27.5654, 53.9054]);
+  expect(current.trackPoints['hf-1'].path).toHaveLength(50);
+  expect(current.getAgentsArray()).toHaveLength(1);
+  expect(current.getTracksArray()).toHaveLength(1);
+});

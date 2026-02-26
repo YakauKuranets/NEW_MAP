@@ -7,7 +7,7 @@ import os
 from flask import Flask, jsonify, redirect, request
 
 from .config import Config
-from .extensions import db, init_celery
+from .extensions import db, init_extensions
 
 
 def _register_blueprints(app: Flask) -> None:
@@ -23,6 +23,7 @@ def _register_blueprints(app: Flask) -> None:
     from .duty import bp as duty_bp
     from .event_chat import bp as event_chat_bp
     from .general import bp as general_bp
+    from .handshake import bp as handshake_bp
     from .geocode import bp as geocode_bp
     from .incidents import bp as incidents_bp
     from .maintenance import bp as maintenance_bp
@@ -37,6 +38,7 @@ def _register_blueprints(app: Flask) -> None:
     from .terminals import bp as terminals_bp
     from .tracker import bp as tracker_bp
     from .video import bp as video_bp
+    from .websocket import ws_bp, sock
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(bot_bp, url_prefix="/api/bot")
@@ -62,6 +64,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(maintenance_bp)
     app.register_blueprint(notifications_bp)
     app.register_blueprint(realtime_bp)
+    app.register_blueprint(handshake_bp)
 
     app.register_blueprint(duty_bp)
     app.register_blueprint(service_access_bp)
@@ -69,6 +72,8 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(terminals_bp)
     app.register_blueprint(tracker_bp)
     app.register_blueprint(video_bp)
+    sock.init_app(app)
+    app.register_blueprint(ws_bp)
 
 
 def _register_common_routes(app: Flask) -> None:
@@ -121,6 +126,12 @@ def _apply_security_headers(app: Flask) -> None:
         return resp
 
 
+def _register_cli(app: Flask) -> None:
+    from .commands import create_admin
+
+    app.cli.add_command(create_admin)
+
+
 def create_app(config_class: type[Config] = Config) -> Flask:
     app = Flask(
         __name__,
@@ -129,8 +140,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     )
     app.config.from_object(config_class)
 
-    db.init_app(app)
-    init_celery(app)
+    init_extensions(app)
 
     with app.app_context():
         from . import models  # noqa: F401
@@ -139,6 +149,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     os.makedirs(app.config.get("UPLOAD_FOLDER", "uploads"), exist_ok=True)
 
     _register_blueprints(app)
+    _register_cli(app)
     _register_common_routes(app)
     _register_error_handlers(app)
     _apply_security_headers(app)

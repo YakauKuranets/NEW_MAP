@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import DeckGL from '@deck.gl/react';
-import { IconLayer, TextLayer } from '@deck.gl/layers';
+import { IconLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { FlyToInterpolator, WebMercatorViewport } from '@deck.gl/core';
-import { Map, Marker } from 'react-map-gl/maplibre';
+import Map, { Marker } from 'react-map-gl/maplibre';
 import { Loader2, Lock, Radar, Search } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -15,9 +15,10 @@ import { useNotify } from './NotificationProvider';
 const INITIAL_VIEW_STATE = {
   longitude: 27.56,
   latitude: 53.9,
-  zoom: 11.5,
-  pitch: 45,
-  bearing: 0,
+  zoom: 14,
+  pitch: 60,
+  bearing: -20,
+  maxPitch: 85,
 };
 
 const MAP_STYLE = '/map_style_cyberpunk.json';
@@ -69,6 +70,8 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
     showPending: true,
   };
   const agentsMap = useMapStore((s) => s.agents);
+  const agentsData = useMapStore((s) => s.getAgentsArray());
+  const trackPointsData = useMapStore((s) => s.getTracksArray());
   const incidents = useMapStore((s) => s.incidents);
   const pendingMarkers = useMapStore((s) => s.pendingMarkers);
   const terminals = useMapStore((s) => s.terminals || s.markers || []);
@@ -164,6 +167,8 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
     [agentsMap],
   );
 
+
+
   const normalizedIncidents = useMemo(
     () => (incidents || [])
       .map((incident) => {
@@ -239,6 +244,43 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
   const sosPulse = Math.sin(pulseTick * 0.15) * 0.5 + 0.5;
 
   const layers = useMemo(() => {
+    const neonTracksLayer = new PathLayer({
+      id: 'agent-tracks-layer',
+      data: trackPointsData,
+      pickable: true,
+      widthScale: 1,
+      widthMinPixels: 2,
+      widthMaxPixels: 6,
+      getPath: (d) => d.path,
+      getColor: () => [0, 240, 255, 220],
+      shadowEnabled: true,
+      updateTriggers: {
+        getPath: [trackPointsData],
+      },
+    });
+
+    const neonAgentsLayer = new ScatterplotLayer({
+      id: 'active-agents-layer',
+      data: agentsData,
+      pickable: true,
+      opacity: 0.9,
+      stroked: true,
+      filled: true,
+      radiusScale: 1,
+      radiusMinPixels: 6,
+      radiusMaxPixels: 14,
+      lineWidthMinPixels: 2,
+      getPosition: (d) => d.coordinates,
+      getFillColor: () => [255, 0, 60, 255],
+      getLineColor: () => [0, 240, 255, 255],
+      updateTriggers: {
+        getPosition: [agentsData],
+      },
+      transitions: {
+        getPosition: 300,
+      },
+    });
+
     const iconLayer = new IconLayer({
       id: 'clustered-icon-layer',
       data: clusteredData,
@@ -282,8 +324,8 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
       },
     });
 
-    return [iconLayer, clusterLabelLayer];
-  }, [clusteredData, sosPulse]);
+    return [neonTracksLayer, neonAgentsLayer, iconLayer, clusterLabelLayer];
+  }, [agentsData, clusteredData, sosPulse, trackPointsData]);
 
   const forwardGeocode = async () => {
     const q = (formValues.address || '').trim();
@@ -425,7 +467,7 @@ export default function CommandCenterMap({ onUserClick, flyToTarget, filters, se
             return;
           }
 
-          const selected = feature.properties || null;
+          const selected = feature.properties || feature || null;
           if (setActiveNode) setActiveNode(toActiveNodePayload(selected));
           setSelectedObject(selected);
           if (selected?.agent_id && onUserClick) onUserClick(String(selected.agent_id));
