@@ -6,8 +6,13 @@
 соответствующие отношения.
 """
 
+import base64
+import hashlib
 import json
+import os
 from typing import Any, Dict, Optional
+
+from cryptography.fernet import Fernet, InvalidToken
 
 try:
     from geoalchemy2 import Geometry
@@ -32,6 +37,41 @@ from .extensions import db
 
 
 from datetime import datetime, timezone
+
+
+def _video_credentials_fernet() -> Fernet:
+    """Return Fernet instance for terminal auth credentials.
+
+    Key priority:
+    1) VIDEO_AUTH_CREDENTIALS_KEY (already base64 urlsafe 32-byte key)
+    2) Derived key from SECRET_KEY
+    """
+    raw_key = (os.environ.get("VIDEO_AUTH_CREDENTIALS_KEY") or "").strip()
+    if raw_key:
+        return Fernet(raw_key.encode("utf-8"))
+
+    secret = (os.environ.get("SECRET_KEY") or "dev-insecure-secret").encode("utf-8")
+    digest = hashlib.sha256(secret).digest()
+    fernet_key = base64.urlsafe_b64encode(digest)
+    return Fernet(fernet_key)
+
+
+def encrypt_terminal_auth_credentials(payload: Dict[str, Any]) -> str:
+    """Encrypt terminal auth credentials dict before storing in DB."""
+    data = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+    return _video_credentials_fernet().encrypt(data).decode("utf-8")
+
+
+def decrypt_terminal_auth_credentials(token: str) -> Dict[str, Any]:
+    """Decrypt terminal auth credentials token from DB into dict."""
+    if not token:
+        return {}
+    try:
+        data = _video_credentials_fernet().decrypt(token.encode("utf-8"))
+        decoded = json.loads(data.decode("utf-8"))
+        return decoded if isinstance(decoded, dict) else {}
+    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
+        return {}
 
 
 def _is_postgres_bound() -> bool:
@@ -288,6 +328,66 @@ class PendingHistory(db.Model):
 # ---------------------------------------------------------------------------
 # Objects and Cameras (B1 feature)
 # ---------------------------------------------------------------------------
+
+
+class Terminal(db.Model):
+    """Видео-терминал для live/archive каналов.
+
+    Поле ``auth_credentials`` хранится в БД в зашифрованном виде (Fernet).
+    """
+
+    __tablename__ = 'terminals'
+    __table_args__ = (
+        db.Index('ix_terminals_ip', 'ip'),
+        db.Index('ix_terminals_type', 'terminal_type'),
+    )
+
+    id: int = db.Column(db.Integer, primary_key=True)
+    name: str = db.Column(db.String(255), nullable=False, default='')
+    ip: str = db.Column(db.String(128), nullable=True)
+    terminal_type: str = db.Column(db.String(64), nullable=True)
+    archive_root_path: str = db.Column(db.String(512), nullable=True)
+    _auth_credentials: str = db.Column('auth_credentials', db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    @property
+    def auth_credentials(self) -> Dict[str, Any]:
+        return decrypt_terminal_auth_credentials(self._auth_credentials or '')
+
+    @auth_credentials.setter
+    def auth_credentials(self, value: Any) -> None:
+        if value is None:
+            self._auth_credentials = None
+            return
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    self._auth_credentials = encrypt_terminal_auth_credentials(parsed)
+                    return
+            except Exception:
+                # treat as pre-encrypted token
+                self._auth_credentials = value
+                return
+        if isinstance(value, dict):
+            self._auth_credentials = encrypt_terminal_auth_credentials(value)
+            return
+        self._auth_credentials = encrypt_terminal_auth_credentials({})
+
+    def to_dict(self, *, include_auth_credentials: bool = False) -> Dict[str, Any]:
+        payload = {
+            'id': self.id,
+            'name': self.name,
+            'ip': self.ip,
+            'terminal_type': self.terminal_type,
+            'archive_root_path': self.archive_root_path,
+            'has_auth_credentials': bool(self._auth_credentials),
+        }
+        # Security by default: never expose secrets in normal serialization.
+        if include_auth_credentials:
+            payload['auth_credentials'] = self.auth_credentials
+        return payload
 
 class Object(db.Model):
     """Произвольный объект/адрес с описанием и набором камер.

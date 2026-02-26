@@ -49,3 +49,38 @@ class IncidentChatSendSchema(StrictSchema):
 
     text: str = Field(min_length=1, max_length=4000)
     author_id: str = Field(min_length=1, max_length=128)
+
+
+class TerminalAuthCredentialsSchema(StrictSchema):
+    """Write-only terminal credentials payload used only on create/update."""
+
+    login: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
+    hash: str | None = Field(default=None, min_length=1, max_length=256)
+    ftp_user: str | None = Field(default=None, min_length=1, max_length=128)
+    ftp_password: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class TerminalUpsertSchema(StrictSchema):
+    """Terminal create/update contract.
+
+    `auth_credentials` is accepted from clients but must never be exposed in
+    response models.
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    ip: str | None = Field(default=None, min_length=1, max_length=128)
+    terminal_type: str | None = Field(default=None, min_length=1, max_length=64)
+    archive_root_path: str | None = Field(default=None, min_length=1, max_length=512)
+    auth_credentials: TerminalAuthCredentialsSchema | None = Field(default=None)
+
+
+class TerminalReadSchema(StrictSchema):
+    """Terminal response contract with credentials redacted (write-only)."""
+
+    id: int
+    name: str
+    ip: str | None = None
+    terminal_type: str | None = None
+    archive_root_path: str | None = None
+    has_auth_credentials: bool = False

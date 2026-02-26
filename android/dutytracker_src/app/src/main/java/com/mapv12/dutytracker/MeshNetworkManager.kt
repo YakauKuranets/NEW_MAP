@@ -23,18 +23,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
-class MeshNetworkManager(private val context: Context) {
+class MeshNetworkManager(
+    private val context: Context,
+    userId: String = "${Build.MODEL}_${Build.ID}",
+) {
 
     val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
 
-    private val strategy = Strategy.P2P_STAR
+    private val STRATEGY = Strategy.P2P_CLUSTER // MESH-топология (каждый с каждым)
     private val serviceId = "com.agency.v4.mesh"
-    private val endpointName = "${Build.MODEL}_${Build.ID}"
+    private val endpointName = userId
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    val connectedPeers = Collections.synchronizedList(mutableListOf<String>())
+    private val connectedEndpoints = ConcurrentHashMap.newKeySet<String>()
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
@@ -73,13 +76,13 @@ class MeshNetworkManager(private val context: Context) {
         }
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
-            if (result.status.isSuccess && !connectedPeers.contains(endpointId)) {
-                connectedPeers.add(endpointId)
+            if (result.status.isSuccess) {
+                connectedEndpoints.add(endpointId)
             }
         }
 
         override fun onDisconnected(endpointId: String) {
-            connectedPeers.remove(endpointId)
+            connectedEndpoints.remove(endpointId)
         }
     }
 
@@ -88,13 +91,13 @@ class MeshNetworkManager(private val context: Context) {
         startDiscovery()
     }
 
-    private fun startAdvertising() {
-        val options = AdvertisingOptions.Builder().setStrategy(strategy).build()
+    fun startAdvertising() {
+        val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
         connectionsClient.startAdvertising(endpointName, serviceId, connectionLifecycleCallback, options)
     }
 
-    private fun startDiscovery() {
-        val options = DiscoveryOptions.Builder().setStrategy(strategy).build()
+    fun startDiscovery() {
+        val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
         connectionsClient.startDiscovery(
             serviceId,
             object : EndpointDiscoveryCallback() {
@@ -109,7 +112,7 @@ class MeshNetworkManager(private val context: Context) {
     }
 
     fun broadcastEmergency(jsonPayload: String): Boolean {
-        val targets = connectedPeers.toList()
+        val targets = connectedEndpoints.toList()
         if (targets.isEmpty()) return false
         val payload = Payload.fromBytes(jsonPayload.toByteArray(Charsets.UTF_8))
         connectionsClient.sendPayload(targets, payload)
@@ -124,7 +127,7 @@ class MeshNetworkManager(private val context: Context) {
     }
 
     private fun relayToOtherPeers(packet: JSONObject, sourceEndpointId: String) {
-        val relayTargets = connectedPeers.filter { it != sourceEndpointId }
+        val relayTargets = connectedEndpoints.filter { it != sourceEndpointId }
         if (relayTargets.isEmpty()) return
 
         val payload = Payload.fromBytes(packet.toString().toByteArray(Charsets.UTF_8))
@@ -135,6 +138,12 @@ class MeshNetworkManager(private val context: Context) {
         connectionsClient.stopAdvertising()
         connectionsClient.stopDiscovery()
         connectionsClient.stopAllEndpoints()
-        connectedPeers.clear()
+        connectedEndpoints.clear()
+    }
+
+    fun restartMesh() {
+        stopAll()
+        startAdvertising()
+        startDiscovery()
     }
 }
