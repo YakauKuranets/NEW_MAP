@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import androidx.room.Room
+import net.sqlcipher.database.SQLiteDatabase
+import net.sqlcipher.database.SupportFactory
 
 /**
  * Application class — точка входа.
@@ -15,12 +17,17 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Room DB — offline queue + event journal
+        // Room DB — offline queue + event journal (encrypted with SQLCipher)
+        val dbPassphrase = SecureStores.getOrCreateDbPassphrase(applicationContext)
+        val passphraseBytes = SQLiteDatabase.getBytes(dbPassphrase.toCharArray())
+        val factory = SupportFactory(passphraseBytes)
+
         _db = Room.databaseBuilder(
             applicationContext,
             AppDatabase::class.java,
             "dutytracker.db"
         )
+            .openHelperFactory(factory)
             .fallbackToDestructiveMigration()
             .build()
 
