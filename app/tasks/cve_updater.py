@@ -10,6 +10,7 @@ from celery import shared_task
 
 from app.extensions import db
 from app.vulnerabilities.models import CVE
+from app.tasks.reports_delivery import send_vulnerability_alerts
 
 NVD_FEED_URL = "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json.zip"
 
@@ -64,6 +65,12 @@ def update_nvd_cve() -> dict[str, int]:
         record.affected_products = products
         record.last_updated = datetime.utcnow()
         db.session.add(record)
+
+        if cvss is not None and float(cvss) >= 7.0:
+            affected = ", ".join(
+                sorted({f"{(p.get('vendor') or '').strip()}:{(p.get('product') or '').strip()}" for p in (products or []) if (p.get('vendor') or p.get('product'))})
+            ) or "unknown"
+            send_vulnerability_alerts.delay(cve_id, description[:500], float(cvss), affected)
 
     db.session.commit()
     return {"created": created, "updated": updated}
