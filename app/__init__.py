@@ -36,8 +36,10 @@ def _register_blueprints(app: Flask) -> None:
     from .requests import bp as requests_bp
     from .service_access import bp as service_access_bp
     from .system import bp as system_bp
+    from .siem import bp as siem_bp
     from .terminals import bp as terminals_bp
     from .tracker import bp as tracker_bp
+    from .threat_intel import bp as threat_intel_bp
     from .video import bp as video_bp
     from .websocket import ws_bp, sock
     from .wordlists import wordlists_bp
@@ -73,8 +75,10 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(duty_bp)
     app.register_blueprint(service_access_bp)
     app.register_blueprint(system_bp)
+    app.register_blueprint(siem_bp, url_prefix="/api")
     app.register_blueprint(terminals_bp)
     app.register_blueprint(tracker_bp)
+    app.register_blueprint(threat_intel_bp, url_prefix="/api")
     app.register_blueprint(video_bp)
     app.register_blueprint(wordlists_bp)
     app.register_blueprint(diagnostics_bp, url_prefix="/api")
@@ -155,6 +159,8 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         from .wordlists import models as wordlist_models  # noqa: F401
         from .diagnostics import models as diagnostics_models  # noqa: F401
         from .alerting import models as alerting_models  # noqa: F401
+        from .darknet import models as darknet_models  # noqa: F401
+        from .siem import models as siem_models  # noqa: F401
         db.create_all()
 
     os.makedirs(app.config.get("UPLOAD_FOLDER", "uploads"), exist_ok=True)

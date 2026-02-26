@@ -55,6 +55,18 @@ celery.conf.beat_schedule = {
         "task": "app.ai.finetune.run_finetuning",
         "schedule": crontab(day_of_month="1", hour=3, minute=0),
     },
+    "export-siem-events": {
+        "task": "app.tasks.siem_tasks.export_pending_events",
+        "schedule": crontab(minute="*/5"),
+    },
+    "retry-failed-siem": {
+        "task": "app.tasks.siem_tasks.retry_failed_events",
+        "schedule": crontab(minute=0),
+    },
+    "cleanup-old-siem": {
+        "task": "app.tasks.siem_tasks.cleanup_old_events",
+        "schedule": crontab(hour=2, minute=0),
+    },
 }
 
 

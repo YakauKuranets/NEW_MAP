@@ -14,6 +14,8 @@ from app.realtime.broker import get_broker
 from app.alerting import checker as alerting_checker  # noqa: F401
 from app.tasks import reports_delivery as reports_delivery_tasks  # noqa: F401
 from app.tasks import diagnostics_scans as diagnostics_scans_tasks  # noqa: F401
+from app.tasks import threat_intel_tasks as threat_intel_tasks  # noqa: F401
+from app.tasks import siem_tasks as siem_tasks  # noqa: F401
 
 
 @celery_app.task(bind=True)
