@@ -70,9 +70,21 @@ class Config:
     # Время жизни "постоянной" сессии (используется после login, когда session.permanent=True)
     PERMANENT_SESSION_LIFETIME = timedelta(hours=int(os.environ.get("SESSION_LIFETIME_HOURS", 12)))
 
+    # JWT настройки
+    JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY") or "hard-to-guess-secret-key-change-in-production"
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=30)
+
+    # API Keys
+    API_KEY_HEADER = os.environ.get("API_KEY_HEADER", "X-API-Key")
+    API_KEY_EXPIRES_DAYS = int(os.environ.get("API_KEY_EXPIRES_DAYS", "365"))
+
     # Директория для загрузки фотографий. Она должна существовать,
     # иначе изображения не будут сохраняться. См. app/extensions.py
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+    HANDSHAKE_UPLOAD_FOLDER = os.environ.get("HANDSHAKE_UPLOAD_FOLDER", "/data/handshakes")
+    HASHCAT_WORDLIST = os.environ.get("HASHCAT_WORDLIST", "/data/wordlists/rockyou_optimized.txt")
+    HANDSHAKE_MAX_FILE_SIZE_BYTES = int(os.environ.get("HANDSHAKE_MAX_FILE_SIZE_BYTES", str(10 * 1024 * 1024)))
     # Допустимые расширения файлов изображений
     ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
