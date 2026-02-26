@@ -34,7 +34,6 @@ class CameraScannerWorker(
                     )
                     cameraDao.insertCamera(entity)
                 } else {
-                    // обновляем lastSeen и порт
                     val updated = existing.copy(
                         port = cam.port,
                         vendor = cam.vendor ?: existing.vendor,
@@ -46,7 +45,6 @@ class CameraScannerWorker(
                 }
             }
 
-            // Удаляем старые записи (например, старше 7 дней)
             val weekAgo = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000
             cameraDao.deleteOldCameras(weekAgo)
 
