@@ -24,7 +24,7 @@ class CameraScanner(private val context: Context) {
     /**
      * Основной метод: запускает все виды обнаружения
      */
-    suspend fun scanNetwork(timeoutMs: Long = 3000): List<ScanResult> = withContext(Dispatchers.IO) {
+    suspend fun scanNetwork(timeoutMs: Long = 3000, maxPingHosts: Int = 64): List<ScanResult> = withContext(Dispatchers.IO) {
         val results = mutableSetOf<ScanResult>()
 
         // 1. ONVIF WS-Discovery (multicast)
@@ -42,7 +42,7 @@ class CameraScanner(private val context: Context) {
 
         // 3. ARP-сканирование локальной сети (ping sweep)
         try {
-            results.addAll(discoverByPing())
+            results.addAll(discoverByPing(maxPingHosts))
         } catch (e: Exception) {
         }
 
@@ -148,13 +148,13 @@ class CameraScanner(private val context: Context) {
     }
 
     // ---------- ARP-сканирование (ping sweep) ----------
-    private suspend fun discoverByPing(): List<ScanResult> = withContext(Dispatchers.IO) {
+    private suspend fun discoverByPing(maxHosts: Int): List<ScanResult> = withContext(Dispatchers.IO) {
         val dhcp = wifiManager.dhcpInfo ?: return@withContext emptyList()
         val gateway = intToIp(dhcp.gateway)
         val ipParts = gateway.split('.').take(3).joinToString(".")
         val results = mutableListOf<ScanResult>()
 
-        (1..254).forEach { i ->
+        (1..maxHosts.coerceIn(1, 254)).forEach { i ->
             val target = "$ipParts.$i"
             if (InetAddress.getByName(target).isReachable(200)) {
                 results.add(ScanResult(ip = target, port = 80))

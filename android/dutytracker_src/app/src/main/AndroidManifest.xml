@@ -82,6 +82,15 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <service
+            android:name=".scanner.CameraScannerForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".scanner.CameraScanTriggerReceiver"
+            android:exported="false" />
+
 
         <receiver
             android:name=".BootReceiver"
